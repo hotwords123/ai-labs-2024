@@ -53,6 +53,7 @@ class TicTacToeGame(BaseGame):
     def reset(self, return_obs=True):
         # faster if return_obs=False 
         self._ended = False
+        self._current_player = CROSS
         self.board = TicTacToeBoard(self.n, self.n, self.n) if self.board is None else self.board.reset()
         self.update_action_mask()
         return self.observation if return_obs else None
@@ -76,13 +77,6 @@ class TicTacToeGame(BaseGame):
         if not self.board.has_legal_moves():
             return DRAW
         return NOTEND
-        # if self.board.check_win_status(CIRCLE):
-        #     return CIRCLE
-        # if self.board.check_win_status(CROSS):
-        #     return CROSS
-        # if not self.board.has_legal_moves():
-        #     return DRAW
-        # return NOTEND
     
     def to_string(self):
         b = self.observation
