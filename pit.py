@@ -10,6 +10,10 @@ def print_devide_line(n=50):
 
 def pit(game:BaseGame, player1:BasePlayer, player2:BasePlayer, log_output:bool=True):
     game.reset()
+    if isinstance(player1, UCTPlayer):
+        player1.mcts = None
+    if isinstance(player2, UCTPlayer):
+        player2.mcts = None
     if log_output:
         print(f"start playing {type(game)}")
         print_devide_line()
@@ -87,39 +91,67 @@ if __name__ == '__main__':
     #####################
     # Modify code below #
     #####################
-    
+    import argparse
+
+    GAME_CLASS = {
+        'tictactoe': TicTacToeGame,
+        'gobang': GobangGame
+    }
+
+    PLAYER_CLASS = {
+        'human': HumanPlayer,
+        'random': RandomPlayer,
+        'alphabeta': AlphaBetaPlayer,
+        'uct': lambda: UCTPlayer(config, deterministic=args.deterministic)
+    }
+
+    parser = argparse.ArgumentParser(description='Pit two players against each other')
+    parser.add_argument('--seed', type=int, help='Random seed')
+    parser.add_argument('--quiet', action='store_true', help='Do not print the game state')
+    parser.add_argument('--game', choices=GAME_CLASS.keys(), default='tictactoe', help='Game to play')
+    parser.add_argument('--args', type=int, nargs='*', help='Arguments for the game')
+    parser.add_argument('--players', choices=PLAYER_CLASS.keys(), nargs=2, default=['random', 'alphabeta'], help='Players to play')
+    parser.add_argument('--n_match', type=int, help='Number of matches to play')
+    parser.add_argument('--C', type=float, default=1.0, help='C value for UCTPlayer')
+    parser.add_argument('--n_rollout', type=int, default=7, help='Number of rollouts for UCTPlayer')
+    parser.add_argument('--n_search', type=int, default=64, help='Number of searches for UCTPlayer')
+    parser.add_argument('--deterministic', action='store_true', help='Deterministic UCTPlayer')
+
+    args = parser.parse_args()
+
     # set seed to reproduce the result
-    # np.random.seed(0)
+    if args.seed is not None:
+        np.random.seed(args.seed)
         
-    game = TicTacToeGame()
-    # game = GobangGame(5, 4)
+    game_args = args.args if args.args is not None else []
+    game = GAME_CLASS[args.game](*game_args)
     
     # config for MCTS
-    config = UCTMCTSConfig()
-    # config.C = 0.5
-    # config.C = 0.7
-    config.C = 1.0
-    # config.C = 2.5
-    # config.C = 5.0
-    config.n_rollout = 7
-    # config.n_rollout = 13
-    config.n_search = 64
-    # config.n_search = 400
+    config = UCTMCTSConfig(
+        C=args.C,
+        n_rollout=args.n_rollout,
+        n_search=args.n_search
+    )
     
     # player initialization    
-    # player1 = HumanPlayer()
-    player1 = RandomPlayer()
-    # player1 = AlphaBetaPlayer()
-    # player1 = UCTPlayer(config, deterministic=True)
-    # player2 = HumanPlayer()
-    # player2 = RandomPlayer()
-    player2 = AlphaBetaPlayer()
-    # player2 = UCTPlayer(config, deterministic=True)
+    player1 = PLAYER_CLASS[args.players[0]]()
+    player2 = PLAYER_CLASS[args.players[1]]()
+
+    result_text = [
+        f"Player 1 ({player1}) win",
+        f"Player 2 ({player2}) win",
+        "Draw"
+    ]
     
     # single match
-    pit(game, player1, player2)
-    
-    # multi_match(game, player1, player2, n_match=10)
-    # multi_match(game, player1, player2, n_match=100)
+    if args.n_match is None:
+        reward = pit(game, player1, player2, log_output=not args.quiet)
+        if args.quiet:
+            print(result_text[0 if reward > 0 else 1 if reward < 0 else 2])
+    else:
+        n_p1_win, n_p2_win, n_draw = multi_match(game, player1, player2, n_match=args.n_match)
+        # for res, n_win in zip(result_text, [n_p1_win, n_p2_win, n_draw]):
+        #     rate = n_win / args.n_match * 100
+        #     print(f"{res}: {n_win} ({rate:.2f}%)")
     
     #####################
