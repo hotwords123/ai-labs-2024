@@ -28,7 +28,7 @@ class TicTacToeGame(BaseGame):
     
     def update_action_mask(self):
         valid_actions = self.board.get_legal_moves()
-        mask = np.zeros(self._action_size)
+        mask = np.zeros(self._action_size, dtype=bool)
         for x, y in valid_actions:
             mask[self._coord2actionid(x, y)] = 1
         self._action_mask_cache = mask
