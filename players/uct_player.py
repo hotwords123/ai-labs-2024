@@ -15,6 +15,9 @@ class UCTPlayer():
     
     def __str__(self):
         return "UCT Player"
+
+    def clear(self):
+        self.mcts = None
     
     def init(self, init_game):
         self.mcts = UCTMCTS(init_game, self.config)

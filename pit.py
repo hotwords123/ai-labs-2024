@@ -14,6 +14,11 @@ def pit(game:BaseGame, player1:BasePlayer, player2:BasePlayer, log_output:bool=T
         print(f"start playing {type(game)}")
         print_devide_line()
     reward = 0
+    
+    for player in [player1, player2]:
+        if player.__class__.__name__ == 'UCTPlayer':
+            player.clear()
+            
     while True:
         a1 = player1.play(game)
         _, reward, done = game.step(a1)

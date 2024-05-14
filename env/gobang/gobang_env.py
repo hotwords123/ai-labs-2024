@@ -49,6 +49,7 @@ class GobangGame(BaseGame):
         
     def reset(self, return_obs=True):
         self._ended = False
+        self._current_player = BLACK
         self.board = GobangBoard(self.n, self.n, self.n_in_row) if self.board is None else self.board.reset()
         self.update_action_mask()
         return self.observation if return_obs else None
