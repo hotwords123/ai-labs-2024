@@ -79,7 +79,9 @@ class UCTMCTS:
         """
         env = node.env.fork()
 
-        for turn in itertools.cycle((0, 1)):
+        # 0: self, 1: opponent
+        # the first move of rollout is played by the opponent
+        for turn in itertools.cycle((1, 0)):
             # pick a random action
             actions = np.nonzero(env.action_mask)[0]
             action = np.random.choice(actions)
@@ -135,4 +137,17 @@ class UCTMCTS:
             # backup the value to the root
             self.backup(leaf, value)
 
+        # self.print_path(self.root)
         return self.get_policy(self.root)
+    
+    def print_path(self, node: MCTSNode = None):
+        """
+        Prints the predicted best path starting from the given node.
+        """
+        node = self.root if node is None else node
+        while not (node is None or node.done):
+            shape = node.env.n, node.env.m
+            print(node.env.to_string())
+            print(np.reshape(node.child_V_total / (node.child_N_visit + 1e-9), shape))
+            print(np.reshape(node.child_N_visit, shape))
+            node = node.get_child(np.argmax(node.child_N_visit))
