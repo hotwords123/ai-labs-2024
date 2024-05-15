@@ -3,3 +3,5 @@ typing
 tqdm
 cython
 matplotlib
+scipy
+pandas
