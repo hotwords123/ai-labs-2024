@@ -51,22 +51,29 @@ function gobang_asym {
 }
 
 function gobang_battle {
-    group_a="C 1.0 n_rollout 12 n_search 500"
-    group_b="C 1.0 n_rollout 12 n_search 200"
-    group_c="C 1.0 n_rollout 12 n_search 900"
-    group_d="C 1.0 n_rollout 7 n_search 500"
-    group_e="C 1.0 n_rollout 20 n_search 500"
-    n_match=20
+    groups=(
+        "C 1.0 n_rollout 12 n_search 500"   # A
+        "C 1.0 n_rollout 12 n_search 200"   # B
+        "C 1.0 n_rollout 12 n_search 1200"  # C
+        "C 1.0 n_rollout 7 n_search 500"    # D
+        "C 1.0 n_rollout 5 n_search 500"    # E
+        "C 1.0 n_rollout 25 n_search 500"   # F
+    )
+    n_match=$1
+    seed=0
+    seed_step=100
 
-    gobang_sym 0 $n_match "$group_a"
-    gobang_asym 100 $n_match "$group_a" "$group_b"
-    gobang_asym 200 $n_match "$group_b" "$group_a"
-    gobang_asym 300 $n_match "$group_a" "$group_c"
-    gobang_asym 400 $n_match "$group_c" "$group_a"
-    gobang_asym 500 $n_match "$group_a" "$group_d"
-    gobang_asym 600 $n_match "$group_d" "$group_a"
-    gobang_asym 700 $n_match "$group_a" "$group_e"
-    gobang_asym 800 $n_match "$group_e" "$group_a"
+    for i in $(seq 0 $(( ${#groups[@]} - 1 ))); do
+        if [[ i -eq 0 ]]; then
+            gobang_sym $seed $n_match "${groups[i]}"
+            seed=$(( $seed + $seed_step ))
+        else
+            gobang_asym $seed $n_match "${groups[0]}" "${groups[i]}"
+            seed=$(( $seed + $seed_step ))
+            gobang_asym $seed $n_match "${groups[i]}" "${groups[0]}"
+            seed=$(( $seed + $seed_step ))
+        fi
+    done
 }
 
 "$@"
