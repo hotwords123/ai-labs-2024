@@ -6,12 +6,13 @@ from mcts.uct_mcts import UCTMCTS, UCTMCTSConfig
 import numpy as np
 
 class UCTPlayer():
-    def __init__(self, config:UCTMCTSConfig = None, deterministic:bool = False) -> None:
+    def __init__(self, config:UCTMCTSConfig = None, deterministic:bool = False, log_policy: bool = False) -> None:
         if config is None:
             config = UCTMCTSConfig()
         self.config = config
         self.mcts = None
         self.deterministic = deterministic
+        self.log_policy = log_policy
     
     def __str__(self):
         return "UCT Player"
@@ -30,7 +31,8 @@ class UCTPlayer():
             action = np.argmax(policy)
         else:
             action = np.random.choice(len(policy), p=policy)
-        # print(policy)
+        if self.log_policy:
+            print(policy)
         self.mcts = self.mcts.get_subtree(action)
         return action
     

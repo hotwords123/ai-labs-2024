@@ -33,7 +33,7 @@ function search_c {
 
 function compare_c {
     C=(0.1 0.3 1.0)
-    command="python -m pit --seed 2 --players alphabeta uct --C {} --n_rollout 7 --n_search 64 --deterministic"
+    command="python -m pit --seed 2 --players alphabeta uct --C {} --n_rollout 7 --n_search 64 --deterministic --log_policy"
     run "compare_c" "$command" "${C[@]}"
 }
 

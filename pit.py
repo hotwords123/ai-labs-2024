@@ -107,8 +107,8 @@ if __name__ == '__main__':
         'human': HumanPlayer,
         'random': RandomPlayer,
         'alphabeta': AlphaBetaPlayer,
-        'uct': lambda: UCTPlayer(config, deterministic=args.deterministic),
-        'uct2': lambda: UCTPlayer(config2, deterministic=args.deterministic),
+        'uct': lambda: UCTPlayer(config, deterministic=args.deterministic, log_policy=args.log_policy),
+        'uct2': lambda: UCTPlayer(config2, deterministic=args.deterministic, log_policy=args.log_policy),
     }
 
     parser = argparse.ArgumentParser(description='Pit two players against each other')
@@ -122,6 +122,7 @@ if __name__ == '__main__':
     parser.add_argument('--n_rollout', type=int, default=7, help='Number of rollouts for UCTPlayer')
     parser.add_argument('--n_search', type=int, default=64, help='Number of searches for UCTPlayer')
     parser.add_argument('--deterministic', action='store_true', help='Deterministic UCTPlayer')
+    parser.add_argument("--log_policy", action="store_true", help="Log policy of UCTPlayer")
     parser.add_argument('--C2', type=float, default=1.0, help='C value for UCTPlayer 2')
     parser.add_argument('--n_rollout2', type=int, default=7, help='Number of rollouts for UCTPlayer 2')
     parser.add_argument('--n_search2', type=int, default=64, help='Number of searches for UCTPlayer 2')
