@@ -1,6 +1,7 @@
 #!/bin/bash
 
-num_procs=$(( $(nproc) / 2 ))
+num_procs=${num_procs:-$(( $(nproc) / 2 ))}
+echo Using $num_procs processes
 
 function run {
     campaign=$1
@@ -11,11 +12,11 @@ function run {
     mkdir -p "$out_dir"
 
     echo "$command" >> "$out_dir".txt
-    printf "%s\n" "${args[@]}" >> "$out_dir".txt
-    echo "" >> "$out_dir".txt
+    printf "%s; " "${args[@]}" >> "$out_dir".txt
+    printf "\n\n" >> "$out_dir".txt
 
     echo $command
-    xargs -P $num_procs -I {} bash -c "echo '{}'; $command > '$out_dir'/'{}'.txt" <<< $(printf "%s\n" "${args[@]}")
+    xargs -P $num_procs -I {} bash -c "echo + '{}'; $command > '$out_dir'/'{}'.txt; echo - '{}'" <<< $(printf "%s\n" "${args[@]}")
 }
 
 function battle {
@@ -31,7 +32,6 @@ function search_c {
 }
 
 function gobang {
-    # [$1, $1 + $2)
     seeds=($(seq $1 $(( $1 + $2 - 1 ))))
     command="python -m pit --seed {} --game gobang --args 5 4 --deterministic ${@:3}"
     run "gobang" "$command" "${seeds[@]}"
