@@ -10,6 +10,9 @@ cdef class TicTacToeBoard():
     def __init__(self, h:int, w:int, n:int) -> None:
         self.c_TicTacToeBoard_ptr = new c_TicTacToeBoard(h, w, n)
     
+    def __dealloc__(self):
+        del self.c_TicTacToeBoard_ptr
+    
     def get_legal_moves(self) -> List[Tuple(int, int)]:
         cdef vector[coord] l = self.c_TicTacToeBoard_ptr.get_legal_moves()
         return [(c.x, c.y) for c in l]
