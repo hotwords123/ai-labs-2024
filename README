@@ -1,0 +1,2 @@
+Install dependencies first:
+pip install -r requirements.txt

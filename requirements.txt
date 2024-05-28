@@ -1,0 +1,6 @@
+gym == 0.26
+matplotlib
+torch
+torchvision
+numpy
+pygame
