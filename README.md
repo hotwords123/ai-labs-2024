@@ -1,4 +1,4 @@
-# Homework1：UCT MCTS
+# AlphaZero for Go, Gobang and Tictactoe Game
 
 ## 快速开始
 
@@ -29,9 +29,6 @@ python setup.py build_ext --inplace
 python setup.py build_ext --inplace --force
 ```
 
-
-
-
 ### 对局
 
 `/players`中定义了使用不同算法的游戏玩家，其中包括一个支持你手动操作的游戏玩家。`pit.py`中包含了对局的脚本，你可以执行以下命令测试AlphaBeta Search和随机策略对局的效果：
@@ -43,13 +40,15 @@ python -m pit
 你可以修改`pit.py`中`if __name__=='__main__'`后的内容，更改对局双方的类型，测试单次对局和多次对局。
 
 
-## 如何实现MCTS
+## 环境
 
-### 环境交互
+
 
 游戏环境（`env`）是维护游戏的核心逻辑、管理棋局状态、并将复杂的操作抽象成统一接口的对象。通过环境的封装，你可以轻松地对游戏进行操作、读取状态。方便起见，与我们将环境封装成了强化学习中常用的`gym`环境的风格。为了提高执行的效率，棋局的核心逻辑使用C++编写，通过cython与python部分代码对接。通过`env/***/setup.py`脚本可以编译这些环境。在使用这些环境前必须先进行编译。
 
-以下是对环境使用方法的简要介绍：
+### python接口
+
+以下是对环境的python接口使用方法的简要介绍：
 
 * 你可以将一个环境（`env`）看做一个棋盘对象。在使用环境进行对局时，你首先需要使用`reset()`方法重置环境，然后让对局双方轮流使用`step()`方法采取动作，根`step()`的返回值判断游戏是否结束和胜者。
 * 选择动作前，你可以使用`action_space_size`属性获取当前的棋盘有多少个可能的动作（动作从0开始编号），再通过环境的`action_mask`属性获取当前哪些状态是合法的（该属性会返回一个长度为`action_space_size`的`numpy`数组，其中每一位为1则表示该动作当前合法，反之为非法）。非法动作会被环境拒绝执行并抛出异常。
@@ -65,7 +64,3 @@ python -m pit
 
 更多环境的属性以及使用方法，请参考`/env/base_env.py`的定义以及`/search_algo/alpha_beta_search.py`中的用法。
 
-
-### MCTS实现
-
-本次作业中，你需要补全`/mcts/uct_mcts.py`中所有标记了`TODO`的位置。本次作业的MCTS使用UCT，你可以参考[A Survey of Monte Carlo Tree Search Methods](https://repository.essex.ac.uk/4117/1/MCTS-Survey.pdf)中对UCT的描述。请按照注释的提示完成代码，不要修改其它未要求修改的代码。

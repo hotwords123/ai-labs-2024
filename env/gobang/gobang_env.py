@@ -41,8 +41,10 @@ class GobangGame(BaseGame):
     
     def fork(self):
         game = type(self)()
-        game.board = self.board.copy()
-        game._action_mask_cache = self._action_mask_cache.copy()
+        if self.board is not None:
+            game.board = self.board.copy()
+        if self._action_mask_cache is not None:
+            game._action_mask_cache = self._action_mask_cache.copy()
         game._current_player = self.current_player
         game._copy_basic_info(self)
         return game

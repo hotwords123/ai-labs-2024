@@ -43,8 +43,10 @@ class TicTacToeGame(BaseGame):
     
     def fork(self):
         game = type(self)()
-        game.board = self.board.copy()
-        game._action_mask_cache = self._action_mask_cache.copy()
+        if self.board is not None:
+            game.board = self.board.copy()
+        if self._action_mask_cache is not None:
+            game._action_mask_cache = self._action_mask_cache.copy()
         game._current_player = self.current_player
         # game.board = deepcopy(self.board)
         game._copy_basic_info(self)
@@ -77,6 +79,13 @@ class TicTacToeGame(BaseGame):
         if not self.board.has_legal_moves():
             return DRAW
         return NOTEND
+        # if self.board.check_win_status(CIRCLE):
+        #     return CIRCLE
+        # if self.board.check_win_status(CROSS):
+        #     return CROSS
+        # if not self.board.has_legal_moves():
+        #     return DRAW
+        # return NOTEND
     
     def to_string(self):
         b = self.observation
