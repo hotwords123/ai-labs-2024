@@ -100,7 +100,8 @@ if __name__ == '__main__':
 
     GAME_CLASS = {
         'tictactoe': TicTacToeGame,
-        'gobang': GobangGame
+        'gobang': GobangGame,
+        'go': GoGame,
     }
 
     PLAYER_CLASS = {

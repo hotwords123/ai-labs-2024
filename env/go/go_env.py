@@ -40,7 +40,7 @@ class GoGame(BaseGame):
     def _update_valid_action_mask(self):
         # update the valid action mask, which is a binary array indicating the valid actions
         # the _valid_action_mask is buffer to avoid computing action_mask every time
-        self._valid_action_mask = np.zeros(self._action_size)
+        self._valid_action_mask = np.zeros(self._action_size, dtype=bool)
         for x, y in self.board.get_legal_moves(self._current_player):
             self._valid_action_mask[self._coord2actionid(x, y)] = 1
         self._valid_action_mask[-1] = 1
@@ -64,7 +64,7 @@ class GoGame(BaseGame):
         self._update_valid_action_mask()
         return self.observation
     
-    def step(self, action:int ) -> Tuple[np.ndarray, float, bool]:
+    def step(self, action:int, return_obs=True) -> Tuple[np.ndarray, float, bool]:
         assert 0 <= action < self._action_size, f"Invalid action:{action} for player:{self._current_player}"
         self._check_reset()
         assert self._valid_action_mask[action], f"Invalid action:{action}(coord:{self._actionid2coord(action)}) for player:{self._current_player}"
@@ -83,6 +83,12 @@ class GoGame(BaseGame):
         self._ended = reward != NOTEND
         self._current_player = -self._current_player
         self._update_valid_action_mask()
-        return self.observation, reward, self._ended
+        return self.observation if return_obs else None, reward, self._ended
         
-    
+    def to_string(self):
+        obs = self.observation
+        ret = ''
+        tokens = {BLACK: '⚫', WHITE: '⚪', EMPTY: '➕'}
+        for i in range(self.n):
+            ret += ''.join(tokens[obs[i, j]] for j in range(self.m)) + '\n'
+        return ret
