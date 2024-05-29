@@ -1,4 +1,5 @@
 from env.go.goboard import GoBoard as Board
+from env.base_env import BLACK, WHITE, EMPTY, DRAW
 import numpy as np
 
 '''
@@ -101,6 +102,11 @@ assert s == [4, 6]
 board.add_stone(1, 1, 1)
 # print(board.__str__())
 assert board.get_score() == [6, 4]
+assert board.get_winner() == EMPTY
+board.pass_stone(-1)
+assert board.get_winner() == EMPTY
+board.pass_stone(1)
+assert board.get_winner() == BLACK
 
 board.load_numpy(np.array([
     [ 0,-1, 1, 0, 0],
@@ -111,6 +117,11 @@ board.load_numpy(np.array([
 ]))
 # print(board.__str__())
 assert board.get_score() == [10, 10]
+assert board.get_winner() == EMPTY
+board.pass_stone(1)
+assert board.get_winner() == EMPTY
+board.pass_stone(-1)
+assert board.get_winner() == DRAW
 
 board.load_numpy(np.array([
     [ 0,-1, 1,-1, 0],
@@ -138,6 +149,11 @@ board.load_numpy(np.array([
 assert set(board.get_legal_moves(-1))==set([(0, 8), (1, 3), (5, 8), (8, 3), (8, 6)])
 assert len(board.get_legal_moves(1))==0
 assert board.get_score() == [39, 42]
+assert board.get_winner() == EMPTY
+board.pass_stone(1)
+assert board.get_winner() == EMPTY
+board.pass_stone(-1)
+assert board.get_winner() == WHITE
 
 board = Board(9)
 board.load_numpy(np.array([
@@ -153,6 +169,39 @@ board.load_numpy(np.array([
 ]))
 assert board.get_score() == [39, 42]
 
+# ending condition test
+board = Board(5)
+for i in range(23):
+    board.add_stone(i // 5, i % 5, BLACK)
+    board.pass_stone(WHITE)
+assert (board.to_numpy()==np.array([
+    [ 1, 1, 1, 1, 1],
+    [ 1, 1, 1, 1, 1],
+    [ 1, 1, 1, 1, 1],
+    [ 1, 1, 1, 1, 1],
+    [ 1, 1, 1, 0, 0],
+])).all()
+board.add_stone(4, 3, BLACK)
+board.add_stone(4, 4, WHITE)
+assert (board.to_numpy()==np.array([
+    [ 0, 0, 0, 0, 0],
+    [ 0, 0, 0, 0, 0],
+    [ 0, 0, 0, 0, 0],
+    [ 0, 0, 0, 0, 0],
+    [ 0, 0, 0, 0,-1],
+])).all()
+board.add_stone(4, 3, BLACK)
+board.add_stone(0, 0, WHITE)
+assert board.get_winner() == EMPTY
+board.add_stone(3, 4, BLACK)
+assert (board.to_numpy()==np.array([
+    [-1, 0, 0, 0, 0],
+    [ 0, 0, 0, 0, 0],
+    [ 0, 0, 0, 0, 0],
+    [ 0, 0, 0, 0, 1],
+    [ 0, 0, 0, 1, 0],
+])).all()
+assert board.get_winner() == BLACK
 
 
 print("TEST PASSED! yeah~")
