@@ -65,7 +65,7 @@ class GoGame(BaseGame):
         return self.observation
     
     def step(self, action:int ) -> Tuple[np.ndarray, float, bool]:
-        assert action < self._action_size, f"Invalid action:{action} for player:{self._current_player}"
+        assert 0 <= action < self._action_size, f"Invalid action:{action} for player:{self._current_player}"
         self._check_reset()
         assert self._valid_action_mask[action], f"Invalid action:{action}(coord:{self._actionid2coord(action)}) for player:{self._current_player}"
         # Execute the action, and check if the game is ended
@@ -74,11 +74,15 @@ class GoGame(BaseGame):
         # NOTE: the reward is 1 when CURRENT player wins, EPS when DRAW, -1 when the opponent player wins, and 0 otherwise
         # NOTE: read the implementation of Gobang and TicTacToe, and goboard.pyx first!
         # NOTE: you should update the valid action mask and current_player after executing the action
-        #########################
-        # TODO: Your code here  #
-        #########################
+        if action == self._PASS_ACTION:
+            self.board.pass_stone(self._current_player)
+        else:
+            x, y = self._actionid2coord(action)
+            self.board.add_stone(x, y, self._current_player)
+        reward = self._get_winner() * self._current_player
+        self._ended = reward != NOTEND
         self._current_player = -self._current_player
         self._update_valid_action_mask()
-        return self.observation, 0, False
+        return self.observation, reward, self._ended
         
     
