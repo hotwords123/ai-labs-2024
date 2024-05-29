@@ -14,4 +14,6 @@
 env/gobang/gobangboard.cpp
 env/tictactoe/tictactoeboard.cpp
 env/go/goboard.cpp
+/hw*
+/checkpoint/
 /results/
