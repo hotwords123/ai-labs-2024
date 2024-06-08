@@ -10,10 +10,6 @@ def print_devide_line(n=50):
 
 def pit(game:BaseGame, player1:BasePlayer, player2:BasePlayer, log_output:bool=True):
     game.reset()
-    if isinstance(player1, UCTPlayer):
-        player1.mcts = None
-    if isinstance(player2, UCTPlayer):
-        player2.mcts = None
     if log_output:
         print(f"start playing {type(game)}")
         print_devide_line()
