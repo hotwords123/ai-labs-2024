@@ -11,7 +11,10 @@ class GoGame(BaseGame):
         self._current_player = BLACK
         self._PASS_ACTION = n*n
         self._valid_action_mask = None
-        
+
+    def init_param_list(self):
+        return [self.n]
+
     def _coord2actionid(self, x, y):
         return x*self.n + y
     
