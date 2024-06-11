@@ -1,18 +1,17 @@
 import os
-import sys
-import time
 
 import numpy as np
 from tqdm import tqdm
 
-sys.path.append('../../')
-from torch import nn
-
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
+from torch.utils.data import DataLoader
 
 from env.base_env import BaseGame
-from .example_net import ConvNet
+from .model import AlphaZeroNet
+from .dataset import GameDataset
 
 import logging
 logger = logging.getLogger(__name__)
@@ -56,8 +55,28 @@ class AverageMeter(object):
         self.avg = self.sum / self.count
 
 
+class CombinedLoss(nn.Module):
+    def __init__(self):
+        super(CombinedLoss, self).__init__()
+        self.cross_entropy = nn.CrossEntropyLoss()
+        self.mse = nn.MSELoss()
+
+    def forward(self, pred, gt):
+        loss = self.cross_entropy(pred['policy'], gt['policy'])
+        loss += self.mse(pred['value'], gt['value'])
+        return loss
+
+
+def to_device(data: object, device: torch.device) -> object:
+    if isinstance(data, tuple):
+        return tuple(to_device(x, device) for x in data)
+    if isinstance(data, dict):
+        return {k: to_device(v, device) for k, v in data.items()}
+    return data.to(device)
+
+
 class ModelWrapper():
-    def __init__(self, observation_size:tuple[int, int], action_size:int, net:ConvNet, config:ModelTrainingConfig=None):
+    def __init__(self, observation_size:tuple[int, int], action_size:int, net:AlphaZeroNet, config:ModelTrainingConfig=None):
         self.net = net
         self.observation_size = observation_size
         self.board_x, self.board_y = observation_size
@@ -82,48 +101,48 @@ class ModelWrapper():
     def copy(self):
         return ModelWrapper(self.observation_size, self.action_size, self.net.__class__(self.observation_size, self.action_size, self.net.config, self.net.device))
     
+    def transform_data(self, observation: np.ndarray):
+        return np.stack((observation == 1, observation == -1), axis=0, dtype=np.float32)
+
     def train(self, examples):
+        dataset = GameDataset(examples, transform=self.transform_data)
+        dataloader = DataLoader(dataset, batch_size=self.config.batch_size, shuffle=True)
+
+        criterion = CombinedLoss()
+
         optimizer = optim.Adam(self.net.parameters(), weight_decay=self.config.weight_decay)
+
         t = tqdm(range(self.config.epochs), desc='Training Net')
         for epoch in t:
             # logger.info('EPOCH ::: ' + str(epoch + 1))
             self.net.train()
 
-            batch_count = int(len(examples) / self.config.batch_size)
+            progress_bar = tqdm(dataloader, total=len(dataloader), leave=False)
+            for x, y in progress_bar:
+                x, y = to_device(x, self.device), to_device(y, self.device)
 
-            for bc in range(batch_count):
-                sample_ids = np.random.randint(len(examples), size=self.config.batch_size)
-                boards, pis, vs = list(zip(*[examples[i] for i in sample_ids]))
-                boards = torch.FloatTensor(np.array(boards).astype(np.float64)).to(self.net.device)
-                target_pis = torch.FloatTensor(np.array(pis)).to(self.net.device)
-                target_vs = torch.FloatTensor(np.array(vs).astype(np.float64)).to(self.net.device)
-
-                # compute output
-                out_pi, out_v = self.net(boards)
-                ############################################################
-                #                  TODO: Your Code Here                    #
-                # compute loss here
-                total_loss = 0
-                ############################################################
-
-                # compute gradient and do SGD step
                 optimizer.zero_grad()
-                total_loss.backward()
+                out = self.net(x)
+
+                loss = criterion(out, y)
+                loss.backward()
                 optimizer.step()
+
+                progress_bar.set_postfix(loss=loss.item())
 
     def predict(self, board):
         """
         board: np array with board
         """
         # preparing input
-        board = torch.FloatTensor(board.astype(np.float64)).to(self.net.device)
-        board = board.view(1, self.board_x, self.board_y)
+        board = self.transform_data(board)
+        board = torch.tensor(board, dtype=torch.float32, device=self.device).unsqueeze(0)
         self.net.eval()
         with torch.no_grad():
-            pi, v = self.net(board)
+            out = self.net(board)
 
         # print('PREDICTION TIME TAKEN : {0:03f}'.format(time.time()-start))
-        return torch.exp(pi).data.cpu().numpy()[0], v.data.cpu().numpy()[0]
+        return F.softmax(out['policy'], dim=1).cpu().numpy()[0], out['value'].item()
 
     def save_checkpoint(self, folder='checkpoint', filename='checkpoint.pth.tar'):
         filepath = os.path.join(folder, filename)
