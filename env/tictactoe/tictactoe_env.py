@@ -16,6 +16,9 @@ class TicTacToeGame(BaseGame):
         self._ended = False
         self._action_mask_cache = None
     
+    def init_param_list(self):
+        return []
+    
     def _coord2actionid(self, x, y):
         return x*self.m + y
 

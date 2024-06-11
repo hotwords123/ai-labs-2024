@@ -2,10 +2,8 @@ from env.go.goboard import GoBoard as Board
 import numpy as np
 
 '''
-This is a test script for go board (implemented in c++ & cython)
-NOTE: this script assume that after calling load_numpy, the board is in the same state as the numpy array
-      and can function correctly. 
-      If you find any bug, please report it to the TA.
+This is a test script for GoBoard
+Note: Read the print instructions at the end of this file!
 '''
 board = Board(5) 
 
@@ -153,6 +151,18 @@ board.load_numpy(np.array([
 ]))
 assert board.get_score() == [39, 42]
 
+board.load_numpy(np.array([
+[ 1, 1, 1, 1, 1, 1, 1, 1, 1],
+[ 1, 1, 1, 1, 1,-1, 0, 1, 0],
+[ 1, 1, 1, 1, 1, 1, 1, 1, 1],
+[ 1,-1, 0, 1, 1,-1, 1, 1, 0],
+[ 1, 1, 1, 1, 1,-1,-1, 1, 1],
+[-1,-1,-1,-1,-1,-1,-1,-1,-1],
+[-1,-1, 0,-1,-1,-1,-1,-1,-1],
+[-1,-1, 1,-1,-1,-1,-1, 0,-1],
+[ 0,-1,-1,-1,-1,-1,-1, 0,-1],
+]))
+print(board.get_score())
 
 
 print("TEST PASSED! yeah~")

@@ -97,7 +97,7 @@ if __name__ == '__main__':
     # np.random.seed(0)
         
     game = TicTacToeGame()
-    # game = GoGame(5)
+    # game = GobangGame(5, 4)
     
     # config for MCTS
     config = UCTMCTSConfig()

@@ -73,6 +73,9 @@ class BaseGame:
     
     def to_string(self) -> str:
         return NotImplementedError
+    
+    def init_param_list(self) -> List:
+        return NotImplementedError
 
 def get_symmetries(board:np.ndarray, policy:np.ndarray) -> List[Tuple[np.ndarray, np.ndarray]]:
     assert board.shape[0] == board.shape[1], f"board shape: {board.shape}"
@@ -114,6 +117,11 @@ class ResultCounter():
                 self.lose += 1
         else:
             self.draw += 1
+    
+    def merge_with(self, other:'ResultCounter'):
+        self.win += other.win
+        self.draw += other.draw
+        self.lose += other.lose
     
     def inverse(self):
         return ResultCounter(self.lose, self.draw, self.win)
