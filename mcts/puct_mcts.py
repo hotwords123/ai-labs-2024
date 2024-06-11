@@ -35,77 +35,92 @@ class PUCTMCTS:
             return None
     
     def puct_action_select(self, node:MCTSNode) -> int:
-        # select the best action based on UCB when expanding the tree
-        
-        ########################
-        # TODO: your code here #
-        ########################
-        return 0
-        ########################
+        """
+        select the best action based on UCB when expanding the tree
+        """
+        # collect the available actions
+        actions = np.nonzero(node.action_mask)[0]
+        V_total = node.child_V_total[node.action_mask]
+        N_visit = node.child_N_visit[node.action_mask]
+        priors = node.child_priors[node.action_mask]
+
+        # calculate the UCB of each action
+        ucb = np.divide(V_total, N_visit, out=np.zeros_like(V_total), where=N_visit > 0)
+        ucb += self.config.C * priors * np.sqrt(np.sum(N_visit)) / (1 + N_visit)
+
+        # return the action with the highest UCB
+        return actions[np.argmax(ucb)]
 
     def backup(self, node:MCTSNode, value:float) -> None:
-        # backup the value of the leaf node to the root
-        # update N_visit and V_total of each node in the path
-        
-        ########################
-        # TODO: your code here #
-        ########################
-        pass 
-        ########################    
-            
-    
-    def rollout(self, node:MCTSNode) -> float:
-        # simulate the game until the end
-        # return the reward of the game
-        # NOTE: the reward should be convert to the perspective of the current player!
-        
-        ########################
-        # TODO: your code here #
-        ########################
-        return 1
-        ########################
+        """
+        backup the value of the leaf node to the root
+        update N_visit and V_total of each node in the path
+        """
+        while (parent := node.parent) is not None:
+            # update the statistics of the node
+            action = node.action
+            parent.child_V_total[action] += value
+            parent.child_N_visit[action] += 1
+            # move to the parent node
+            node = parent
+            value = -value
     
     def pick_leaf(self) -> MCTSNode:
-        # select the leaf node to expand
-        # the leaf node is the node that has not been expanded
-        # create and return a new node if game is not ended
-        
-        ########################
-        # TODO: your code here #
-        ########################
-        return self.root
-        ########################
+        """
+        select the leaf node to expand
+        the leaf node is the node that has not been expanded
+        create and return a new node if game is not ended
+        """
+        node = self.root
+        while not node.done:
+            action = self.puct_action_select(node)
+            if node.has_child(action):
+                node = node.get_child(action)
+            else:
+                return self.expand(node, action)
+        return node
+    
+    def expand(self, node: MCTSNode, action: int) -> MCTSNode:
+        """
+        expand the leaf node by taking the given action
+        """
+        env = node.env.fork()
+        obs, reward, _ = env.step(action)
+
+        policy, value = self.model.predict(obs * env.current_player)
+
+        child = MCTSNode(action=action, env=env, reward=reward, value=value, parent=node)
+        child.set_prior(policy)
+
+        node.children[action] = child
+        return child
     
     def get_policy(self, node:MCTSNode = None) -> np.ndarray:
-        # return the policy of the tree(root) after the search
-        # the policy conmes from the visit count of each action 
-        
-        ########################
-        # TODO: your code here #
-        ########################
-        return np.ones(len(node.child_N_visit)) / len(node.child_N_visit)
-        ########################
+        """
+        return the policy of the tree (root) after the search
+        the policy comes from the visit count of each action 
+        """
+        node = self.root if node is None else node
+        return node.child_N_visit / np.sum(node.child_N_visit)
 
     def search(self):
-        # search the tree for n_search times
-        # eachtime, pick a leaf node, rollout the game (if game is not ended) 
-        #   for n_rollout times, and backup the value.
-        # return the policy of the tree after the search
+        """
+        search the tree for n_search times
+        each time, pick a leaf node, evaluate the game using the model,
+        and backup the value.
+        return the policy of the tree after the search
+        """
+        assert not self.root.done, "The game has ended"
+
         for _ in range(self.config.n_search):
             leaf = self.pick_leaf()
-            value = 0
             if leaf.done:
-                ########################
-                # TODO: your code here #
-                ########################
-                pass 
-                ########################
+                # if the game has ended, the utility is the final reward
+                value = leaf.reward
             else:
-                ########################
-                # TODO: your code here #
-                ########################
-                pass
-                ########################
+                # otherwise, evaluate the game using the model
+                # negate the value because it is from the perspective of the opponent
+                value = -leaf.value
             self.backup(leaf, value)
 
         return self.get_policy(self.root)

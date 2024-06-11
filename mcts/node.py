@@ -8,12 +8,14 @@ class MCTSNode:
     def __init__(
         self, 
         action:int, env:BaseGame, reward:bool,
+        value: float = 0.0,
         parent: 'MCTSNode' = None
     ) -> None:
         self.env  = env
         
         self.action = action
         self.reward = reward
+        self.value = value
         self.n_action = env.action_space_size
         self.action_mask = env.action_mask
         
