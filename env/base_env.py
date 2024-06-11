@@ -87,17 +87,17 @@ def get_symmetries(board:np.ndarray, policy:np.ndarray) -> List[Tuple[np.ndarray
         pi_board = np.reshape(policy, (n, n))
     l = []
 
-    for i in range(0, 5):
+    for i in range(4):
         for j in [True, False]:
             newB = np.rot90(board, i)
             newPi = np.rot90(pi_board, i)
             if j:
                 newB = np.fliplr(newB)
                 newPi = np.fliplr(newPi)
+            newPi = newPi.ravel()
             if is_go_game:
-                l += [(newB, list(newPi.ravel()) + [policy[-1]])]
-            else:
-                l += [(newB, list(newPi.ravel()) )]
+                newPi = np.concatenate((newPi, policy[-1:]))
+            l.append((newB, newPi))
     return l
 
 class ResultCounter():
