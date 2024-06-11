@@ -43,14 +43,12 @@ class MCTSNode:
         return self.children.get(action, None)
     
     def set_prior(self, prior:np.ndarray):
-        # for PUCT
-        self.child_priors = prior
+        self.child_priors = prior.copy()
     
     def has_child(self, action:int):
         return action in self.children
         
     def cut_parent(self):
-        # detach current node from parent
         self.parent = None
     
     

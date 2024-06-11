@@ -15,6 +15,9 @@ class GobangGame(BaseGame):
         self._ended = False
         self._action_mask_cache = None
     
+    def init_param_list(self):
+        return [self.board.n, self.n_in_row]
+    
     def _coord2actionid(self, x, y):
         return x*self.m + y
 
@@ -40,7 +43,7 @@ class GobangGame(BaseGame):
         return self.observation * self._current_player
     
     def fork(self):
-        game = type(self)()
+        game = type(self)(*self.init_param_list())
         if self.board is not None:
             game.board = self.board.copy()
         if self._action_mask_cache is not None:
