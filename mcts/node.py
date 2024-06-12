@@ -24,6 +24,7 @@ class MCTSNode:
         
         self.child_V_total = np.zeros(self.n_action, dtype=np.float32)
         self.child_N_visit = np.zeros(self.n_action, dtype=np.int32)
+        self.child_Q_value = np.zeros(self.n_action, dtype=np.float32)
         self.child_priors  = np.zeros(self.n_action, dtype=np.float32)
         
     @property

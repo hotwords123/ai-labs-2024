@@ -25,6 +25,7 @@ class PUCTMCTS:
         # print("child_prior=", child_prior)
         self.root.set_prior(child_prior)
         self.root.value = value
+        self.root.child_Q_value.fill(value)
     
     def get_subtree(self, action:int):
         # return a subtree with root as the child of the current root
@@ -41,13 +42,12 @@ class PUCTMCTS:
         """
         # collect the available actions
         actions = np.nonzero(node.action_mask)[0]
-        V_total = node.child_V_total[node.action_mask]
+        Q_value = node.child_Q_value[node.action_mask]
         N_visit = node.child_N_visit[node.action_mask]
         priors = node.child_priors[node.action_mask]
 
         # calculate the UCB of each action
-        ucb = np.divide(V_total, N_visit, out=np.zeros_like(V_total), where=N_visit > 0)
-        ucb += self.config.C * priors * np.sqrt(np.sum(N_visit)) / (1 + N_visit)
+        ucb = Q_value + self.config.C * priors * np.sqrt(1 + np.sum(N_visit)) / (1 + N_visit)
 
         # return the action with the highest UCB
         return actions[np.argmax(ucb)]
@@ -62,6 +62,7 @@ class PUCTMCTS:
             action = node.action
             parent.child_V_total[action] += value
             parent.child_N_visit[action] += 1
+            parent.child_Q_value[action] = parent.child_V_total[action] / parent.child_N_visit[action]
             # move to the parent node
             node = parent
             value = -value
@@ -92,6 +93,7 @@ class PUCTMCTS:
 
         child = MCTSNode(action=action, env=env, reward=reward, value=value, parent=node)
         child.set_prior(policy)
+        child.child_Q_value.fill(value)
 
         node.children[action] = child
         return child
