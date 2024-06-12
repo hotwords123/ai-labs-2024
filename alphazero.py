@@ -117,9 +117,12 @@ class AlphaZero:
             if mcts is None:
                 mcts = puct_mcts.PUCTMCTS(env, self.net, self.mcts_config)
 
-    def format_top_moves(self, policy: np.ndarray, top_n: int = 5) -> str:
+    def format_top_moves(self, policy: np.ndarray, top_n: int = 10, p_threshold: float = 0.01) -> str:
         top_indices = np.argsort(policy)[::-1][:top_n]
-        return ' '.join(f'{self.format_action(i)}({policy[i]:.3f})' for i in top_indices)
+        return ' '.join(
+            f'{self.format_action(i)}({policy[i]:.3f})'
+            for i in top_indices if policy[i] > p_threshold
+        )
 
     def format_action(self, action: int) -> str:
         n = self.env.n
