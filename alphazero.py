@@ -99,7 +99,13 @@ class AlphaZero:
             
             action = np.random.choice(len(policy), p=policy)
             state, reward, done = env.step(action)
-            data.add_move(player, action)
+            comment = '\n'.join((
+                f'Value: {mcts.root.value:.3f}',
+                f'Priors: {self.format_top_moves(mcts.root.child_priors)}',
+                f'Top moves: {self.format_top_moves(policy)}',
+                f'PV: {" ".join(self.format_action(a) for a in mcts.get_path())}'
+            ))
+            data.add_move(player, action, comment)
             if done:
                 reward *= player
                 data.set_result(reward)
@@ -110,6 +116,18 @@ class AlphaZero:
             mcts = mcts.get_subtree(action)
             if mcts is None:
                 mcts = puct_mcts.PUCTMCTS(env, self.net, self.mcts_config)
+
+    def format_top_moves(self, policy: np.ndarray, top_n: int = 5) -> str:
+        top_indices = np.argsort(policy)[::-1][:top_n]
+        return ' '.join(f'{self.format_action(i)}({policy[i]:.3f})' for i in top_indices)
+
+    def format_action(self, action: int) -> str:
+        n = self.env.n
+        if action == n * n:
+            return 'PASS'
+        else:
+            x, y = action % n, action // n
+            return 'ABCDEFGHJKLMNOPQRST'[x] + str(n - y)
 
     def save_sgf(self, sgf_name: str, data: GameData):
         if not self.config.sgf_path:

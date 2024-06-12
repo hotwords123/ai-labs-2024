@@ -21,9 +21,10 @@ class PUCTMCTS:
         self.root = MCTSNode(
             action=None, env=env, reward=0
         )
-        child_prior, _ = self.model.predict(obs * env.current_player)
+        child_prior, value = self.model.predict(obs * env.current_player)
         # print("child_prior=", child_prior)
         self.root.set_prior(child_prior)
+        self.root.value = value
     
     def get_subtree(self, action:int):
         # return a subtree with root as the child of the current root
@@ -126,3 +127,15 @@ class PUCTMCTS:
             self.backup(leaf, value)
 
         return self.get_policy(self.root)
+
+    def get_path(self, node: MCTSNode = None) -> list[int]:
+        """
+        Prints the predicted best path starting from the given node.
+        """
+        node = self.root if node is None else node
+        path = []
+        while not (node is None or node.done):
+            action = np.argmax(node.child_N_visit)
+            path.append(action)
+            node = node.get_child(action)
+        return path
