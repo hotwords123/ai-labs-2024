@@ -115,12 +115,12 @@ def execute_episode_worker(
                         
                         l = get_symmetries(state, policy) # rotated/flipped [(state, policy), ...]
                         # l = [(state, policy)]
-                        train_examples += [(x[0], x[1], player) for x in l] # [(state, pi, player), ...]
+                        train_examples += [(l_state * player, l_pi, player) for l_state, l_pi in l] # [(state, pi, player), ...]
                         
                         action = np.random.choice(len(policy), p=policy)
                         state, reward, done = env.step(action)
                         if done:
-                            examples = [(x[0]*player, x[1], reward*((-1)**(x[-1]!=player))) for x in train_examples] # [(state, pi, reward), ...]
+                            examples = [(l_state, l_pi, reward * l_player) for l_state, l_pi, l_player in train_examples] # [(state, pi, reward), ...]
                             all_examples += examples
                             all_episode_len.append(episode_step)
                             result_counter.add(reward, player)

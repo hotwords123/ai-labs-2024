@@ -106,8 +106,10 @@ class PUCTMCTS:
     def search(self):
         """
         search the tree for n_search times
-        each time, pick a leaf node, evaluate the game using the model,
-        and backup the value.
+        eachtime, pick a leaf node, compute v&p with neural-network (if game is not ended) 
+        , and backup the value.
+        NOTE: the value returned by the neural-network is the value of the the leaf state
+            maybe you should multiply it by -1 before backup
         return the policy of the tree after the search
         """
         assert not self.root.done, "The game has ended"

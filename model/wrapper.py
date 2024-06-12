@@ -37,23 +37,6 @@ class ModelTrainingConfig:
         self.num_channels = num_channels
         self.weight_decay = weight_decay
 
-class AverageMeter(object):
-
-    def __init__(self):
-        self.val = 0
-        self.avg = 0
-        self.sum = 0
-        self.count = 0
-
-    def __repr__(self):
-        return f'{self.avg:.2e}'
-
-    def update(self, val, n=1):
-        self.val = val
-        self.sum += val * n
-        self.count += n
-        self.avg = self.sum / self.count
-
 
 class CombinedLoss(nn.Module):
     def __init__(self):
