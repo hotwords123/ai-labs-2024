@@ -27,14 +27,12 @@ class ModelTrainingConfig:
         dropout:float=0.3, 
         epochs:int=20, 
         batch_size:int=128, 
-        num_channels:int=512,
         weight_decay=1e-6,
     ):
         self.lr = lr
         self.dropout = dropout
         self.epochs = epochs
         self.batch_size = batch_size
-        self.num_channels = num_channels
         self.weight_decay = weight_decay
 
 
@@ -127,22 +125,9 @@ class ModelWrapper():
         # print('PREDICTION TIME TAKEN : {0:03f}'.format(time.time()-start))
         return F.softmax(out['policy'], dim=1).cpu().numpy()[0], out['value'].item()
 
-    def save_checkpoint(self, folder='checkpoint', filename='checkpoint.pth.tar'):
-        filepath = os.path.join(folder, filename)
-        if not os.path.exists(folder):
-            logger.warning("Checkpoint Directory does not exist! Making directory {}".format(folder))
-            os.mkdir(folder)
-        else:
-            logger.debug("Checkpoint Directory exists. ")
-        torch.save({
-            'state_dict': self.net.state_dict(),
-        }, filepath)
+    def save_checkpoint(self, file):
+        torch.save({'state_dict': self.net.state_dict()}, file)
 
-    def load_checkpoint(self, folder='checkpoint', filename='checkpoint.pth.tar'):
-        # https://github.com/pytorch/examples/blob/master/imagenet/main.py#L98
-        filepath = os.path.join(folder, filename)
-        if not os.path.exists(filepath):
-            raise ("No model in path {}".format(filepath))
-        map_location = self.net.device
-        checkpoint = torch.load(filepath, map_location=map_location)
+    def load_checkpoint(self, file):
+        checkpoint = torch.load(file, map_location=self.device)
         self.net.load_state_dict(checkpoint['state_dict'])
