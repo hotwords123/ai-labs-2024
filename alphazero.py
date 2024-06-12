@@ -1,8 +1,9 @@
 from env.base_env import BaseGame, get_symmetries, ResultCounter
 from torch.nn import Module
 from model.wrapper import ModelWrapper, ModelTrainingConfig
-from model.example_net import MLPNet, ConvNet, MyNet, BaseNetConfig
+from model.model import AlphaZeroNet
 from mcts import puct_mcts
+from util import *
 
 import numpy as np
 import random, sys
@@ -11,6 +12,9 @@ from tqdm import tqdm
 from random import shuffle
 from players import *
 from mcts.uct_mcts import UCTMCTSConfig
+
+from pathlib import Path
+from datetime import datetime
 
 from pit_puct_mcts import multi_match
 
@@ -30,7 +34,8 @@ class AlphaZeroConfig():
         n_search:int=200, 
         temperature:float=1.0, 
         C:float=1.0,
-        checkpoint_path:str="checkpoint"
+        checkpoint_path:str="checkpoint",
+        sgf_path:str|None=None,
     ):
         self.n_train_iter = n_train_iter
         self.n_match_train = n_match_train
@@ -43,6 +48,7 @@ class AlphaZeroConfig():
         self.C = C
         
         self.checkpoint_path = checkpoint_path
+        self.sgf_path = sgf_path
 
 class AlphaZero:
     def __init__(self, env:BaseGame, net:ModelWrapper, config:AlphaZeroConfig):
@@ -62,6 +68,7 @@ class AlphaZero:
     def execute_episode(self):
         # collect examples from one game episode
         train_examples = []
+        history = []
         env = self.env.fork()
         state = env.reset()
         config = copy.copy(self.mcts_config)
@@ -76,12 +83,18 @@ class AlphaZero:
             
             
             l = get_symmetries(state, policy) # rotated/flipped [(state, policy), ...]
-            train_examples += [(x[0], x[1], player) for x in l] # [(state, pi, player), ...]
+            train_examples += [(l_state * player, l_pi, player) for l_state, l_pi in l] # [(state, pi, player), ...]
             
             action = np.random.choice(len(policy), p=policy)
             state, reward, done = env.step(action)
+            history.append((player, action))
             if done:
-                examples = [(x[0]*player, x[1], reward*((-1)**(x[-1]!=player))) for x in train_examples] # [(state, pi, reward), ...]
+                reward *= player
+                examples = [(l_state, l_pi, reward * l_player) for l_state, l_pi, l_player in train_examples] # [(state, pi, reward), ...]
+                if self.config.sgf_path:
+                    sgf_file = Path(self.config.sgf_path) / f'{datetime.now().strftime("%Y%m%d-%H%M%S")}.sgf'
+                    sgf_file.parent.mkdir(parents=True, exist_ok=True)
+                    sgf_file.write_text(history_to_sgf(env.n, history))
                 return examples
             mcts = mcts.get_subtree(action)
             if mcts is None:
@@ -97,8 +110,11 @@ class AlphaZero:
         logger.info(f"[EVALUATION RESULT]:(first)  win{result[1][0]}, lose{result[1][1]}, draw{result[1][2]}")
         logger.info(f"[EVALUATION RESULT]:(second) win{result[2][0]}, lose{result[2][1]}, draw{result[2][2]}")
     
-    def learn(self):
-        for iter in range(1, self.config.n_train_iter + 1):
+    def learn(self, last_epoch: int = 0):
+        if last_epoch > 0:
+            self.net.load_checkpoint(folder=self.config.checkpoint_path, filename=f'train-{last_epoch}.pth.tar')
+
+        for iter in range(last_epoch + 1, self.config.n_train_iter + 1):
             logger.info(f"------ Start Self-Play Iteration {iter} ------")
             
             # collect new examples
@@ -118,6 +134,10 @@ class AlphaZero:
             train_data = copy.copy(self.train_eamples_queue)
             shuffle(train_data)
             logger.info(f"[TRAIN DATA SIZE]: {len(train_data)}")
+
+            self.net.train(train_data)
+
+            self.net.save_checkpoint(folder=self.config.checkpoint_path, filename=f'train-{iter}.pth.tar')
             
             ############################################################
             #                  TODO: Your Code Here                    #
@@ -163,7 +183,8 @@ if __name__ == "__main__":
         n_search=120, 
         temperature=1.0, 
         C=1.0,
-        checkpoint_path="checkpoint"
+        checkpoint_path="checkpoint",
+        sgf_path="results/self-play",
     )
     model_training_config = ModelTrainingConfig(
         epochs=10,
@@ -177,7 +198,7 @@ if __name__ == "__main__":
     
     env = GoGame(9)
     # net = MLPNet(env.observation_size, env.action_space_size, BaseNetConfig(), device=device)
-    net = MyNet(env.observation_size, env.action_space_size, BaseNetConfig(), device=device)
+    net = AlphaZeroNet(env.observation_size, env.action_space_size, device=device)
     net = ModelWrapper(env.observation_size, env.action_space_size, net, model_training_config)
     
     alphazero = AlphaZero(env, net, config)
