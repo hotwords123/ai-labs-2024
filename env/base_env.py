@@ -87,7 +87,7 @@ def get_symmetries(board:np.ndarray, policy:np.ndarray) -> List[Tuple[np.ndarray
         pi_board = np.reshape(policy, (n, n))
     l = []
 
-    for i in range(0, 5):
+    for i in range(1, 5):
         for j in [True, False]:
             newB = np.rot90(board, i)
             newPi = np.rot90(pi_board, i)

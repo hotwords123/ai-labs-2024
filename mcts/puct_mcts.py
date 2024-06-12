@@ -52,18 +52,6 @@ class PUCTMCTS:
         ########################
         pass 
         ########################    
-            
-    
-    def rollout(self, node:MCTSNode) -> float:
-        # simulate the game until the end
-        # return the reward of the game
-        # NOTE: the reward should be convert to the perspective of the current player!
-        
-        ########################
-        # TODO: your code here #
-        ########################
-        return 1
-        ########################
     
     def pick_leaf(self) -> MCTSNode:
         # select the leaf node to expand
@@ -88,8 +76,10 @@ class PUCTMCTS:
 
     def search(self):
         # search the tree for n_search times
-        # eachtime, pick a leaf node, rollout the game (if game is not ended) 
-        #   for n_rollout times, and backup the value.
+        # eachtime, pick a leaf node, compute v&p with neural-network (if game is not ended) 
+        # , and backup the value.
+        # NOTE: the value returned by the neural-network is the value of the the leaf state
+        #       maybe you should multiply it by -1 before backup
         # return the policy of the tree after the search
         for _ in range(self.config.n_search):
             leaf = self.pick_leaf()

@@ -76,12 +76,12 @@ class AlphaZero:
             
             
             l = get_symmetries(state, policy) # rotated/flipped [(state, policy), ...]
-            train_examples += [(x[0], x[1], player) for x in l] # [(state, pi, player), ...]
+            train_examples += [(x[0]*player, x[1], player) for x in l] # [(state, pi, player), ...]
             
             action = np.random.choice(len(policy), p=policy)
             state, reward, done = env.step(action)
             if done:
-                examples = [(x[0]*player, x[1], reward*((-1)**(x[-1]!=player))) for x in train_examples] # [(state, pi, reward), ...]
+                examples = [(x[0], x[1], reward*((-1)**(x[-1]!=player))) for x in train_examples] # [(state, pi, reward), ...]
                 return examples
             mcts = mcts.get_subtree(action)
             if mcts is None:

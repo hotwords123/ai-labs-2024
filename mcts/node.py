@@ -7,7 +7,7 @@ INF = 1e16
 class MCTSNode:
     def __init__(
         self, 
-        action:int, env:BaseGame, reward:bool,
+        action:int, env:BaseGame, reward:float,
         parent: 'MCTSNode' = None
     ) -> None:
         self.env  = env
