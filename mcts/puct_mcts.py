@@ -14,6 +14,9 @@ class PUCTMCTS:
         if root is None:
             self.init_tree(init_env)
         self.root.cut_parent()
+
+        if config.with_noise:
+            self.add_dirichlet_noise(self.root)
     
     def init_tree(self, init_env:BaseGame):
         env = init_env.fork()
@@ -26,6 +29,13 @@ class PUCTMCTS:
         self.root.set_prior(child_prior)
         self.root.value = value
         self.root.child_Q_value.fill(value)
+
+    def add_dirichlet_noise(self, node: MCTSNode):
+        """
+        add dirichlet noise to the prior of the root node
+        """
+        noise = np.random.dirichlet([self.config.dir_alpha] * node.n_action)
+        node.child_priors = (1 - self.config.dir_epsilon) * node.child_priors + self.config.dir_epsilon * noise
     
     def get_subtree(self, action:int):
         # return a subtree with root as the child of the current root
@@ -104,9 +114,10 @@ class PUCTMCTS:
         the policy comes from the visit count of each action 
         """
         node = self.root if node is None else node
-        return node.child_N_visit / np.sum(node.child_N_visit)
+        probs = node.child_N_visit ** (1 / self.config.temperature)
+        return probs / np.sum(probs)
 
-    def search(self):
+    def search(self) -> np.ndarray:
         """
         search the tree for n_search times
         eachtime, pick a leaf node, compute v&p with neural-network (if game is not ended) 

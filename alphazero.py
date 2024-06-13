@@ -35,11 +35,9 @@ class AlphaZeroConfig():
         n_match_eval:int=20,
         max_queue_length:int=8000,
         update_threshold:float=0.501,
-        n_search:int=200, 
-        temperature:float=1.0, 
-        C:float=1.0,
+        opening_moves:int=10,
         checkpoint_path:str="checkpoint",
-        sgf_path:str|None=None,
+        sgf_path:str="sgf",
     ):
         self.job_id = job_id
 
@@ -49,25 +47,18 @@ class AlphaZeroConfig():
         self.n_match_update = n_match_update
         self.n_match_eval = n_match_eval
         self.update_threshold = update_threshold
-        self.n_search = n_search
-        self.temperature = temperature
-        self.C = C
+        self.opening_moves = opening_moves
         
         self.checkpoint_path = checkpoint_path
         self.sgf_path = sgf_path
 
 class AlphaZero:
-    def __init__(self, env:BaseGame, net:ModelWrapper, config:AlphaZeroConfig):
+    def __init__(self, env:BaseGame, net:ModelWrapper, config:AlphaZeroConfig, mcts_config:puct_mcts.MCTSConfig):
         self.env = env
         self.net = net
         self.last_net = net.copy()
         self.config = config
-        self.mcts_config = puct_mcts.MCTSConfig(
-            C=config.C, 
-            n_search=config.n_search, 
-            temperature=config.temperature
-        )
-        self.mcts_config.with_noise = False
+        self.mcts_config = mcts_config
         self.mcts = None
         self.train_eamples_queue = [] 
         self.checkpoint_dir = Path(config.checkpoint_path) / config.job_id
@@ -83,9 +74,8 @@ class AlphaZero:
         )
         env = self.env.fork()
         state = env.reset()
-        config = copy.copy(self.mcts_config)
-        config.with_noise = True
-        mcts = puct_mcts.PUCTMCTS(env, self.net, config)
+        mcts_config = copy.copy(self.mcts_config)
+        mcts = puct_mcts.PUCTMCTS(env, self.net, mcts_config)
         episodeStep = 0
         fg = False
         while True:
@@ -97,7 +87,13 @@ class AlphaZero:
             l = get_symmetries(state, policy) # rotated/flipped [(state, policy), ...]
             train_examples += [(l_state * player, l_pi, player) for l_state, l_pi in l] # [(state, pi, player), ...]
             
-            action = np.random.choice(len(policy), p=policy)
+            if episodeStep <= self.config.opening_moves:
+                # For the first few moves, we use a higher temperature to encourage exploration
+                action = np.random.choice(len(policy), p=policy)
+            else:
+                # For the rest of the moves, we always select the action with the highest probability
+                action = np.argmax(policy)
+
             state, reward, done = env.step(action)
             comment = '\n'.join((
                 f'Value: {mcts.root.value:.3f}',
@@ -115,7 +111,7 @@ class AlphaZero:
                 return examples
             mcts = mcts.get_subtree(action)
             if mcts is None:
-                mcts = puct_mcts.PUCTMCTS(env, self.net, self.mcts_config)
+                mcts = puct_mcts.PUCTMCTS(env, self.net, mcts_config)
 
     def format_top_moves(self, policy: np.ndarray, top_n: int = 10, p_threshold: float = 0.01) -> str:
         top_indices = np.argsort(policy)[::-1][:top_n]
@@ -221,6 +217,10 @@ def parse_args():
     parser.add_argument('--n_search', type=int, default=120, help='number of MCTS simulations')
     parser.add_argument('--temperature', type=float, default=1.0, help='temperature for MCTS')
     parser.add_argument('--C', type=float, default=1.0, help='exploration constant for MCTS')
+    parser.add_argument('--with_noise', action='store_true', help='use dirichlet noise for MCTS')
+    parser.add_argument('--dir_epsilon', type=float, default=0.25, help='dirichlet noise epsilon')
+    parser.add_argument('--dir_alpha', type=float, default=0.15, help='dirichlet noise alpha')
+    parser.add_argument("--opening_moves", type=int, default=10, help="number of opening moves")
 
     subparsers = parser.add_subparsers(dest='mode', required=True)
 
@@ -270,10 +270,16 @@ if __name__ == "__main__":
         n_match_eval=args.n_match_eval,
         max_queue_length=args.max_queue_length,
         update_threshold=args.update_threshold,
-        # MCTS settings
-        n_search=args.n_search, 
-        temperature=args.temperature, 
+        opening_moves=args.opening_moves,
+    )
+
+    mcts_config = puct_mcts.MCTSConfig(
+        n_search=args.n_search,
+        temperature=args.temperature,
         C=args.C,
+        with_noise=args.with_noise,
+        dir_epsilon=args.dir_epsilon,
+        dir_alpha=args.dir_alpha,
     )
 
     model_training_config = None
@@ -293,7 +299,7 @@ if __name__ == "__main__":
     net = AlphaZeroNet(env.observation_size, env.action_space_size, config=model_config, device=device)
     net = ModelWrapper(env.observation_size, env.action_space_size, net, model_training_config)
     
-    alphazero = AlphaZero(env, net, config)
+    alphazero = AlphaZero(env, net, config, mcts_config)
     if args.mode == "eval":
         alphazero.eval(args.checkpoint_name)
     else:
