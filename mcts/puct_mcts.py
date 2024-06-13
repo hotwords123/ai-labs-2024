@@ -136,8 +136,10 @@ class PUCTMCTS:
         """
         node = self.root if node is None else node
         path = []
-        while not (node is None or node.done):
+        while not node.done:
             action = np.argmax(node.child_N_visit)
-            path.append(action)
+            if not node.has_child(action):
+                break
             node = node.get_child(action)
+            path.append(action)
         return path
