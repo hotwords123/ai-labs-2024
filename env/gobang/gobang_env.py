@@ -16,7 +16,7 @@ class GobangGame(BaseGame):
         self._action_mask_cache = None
     
     def init_param_list(self):
-        return [self.board.n, self.n_in_row]
+        return [self.n, self.n_in_row]
     
     def _coord2actionid(self, x, y):
         return x*self.m + y
