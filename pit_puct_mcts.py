@@ -1,53 +1,19 @@
 from env import *
 from players import *
-from mcts.puct_mcts import MCTSConfig as PUCTMCTSConfig
+from mcts.uct_mcts import UCTMCTSConfig
 from tqdm import trange, tqdm
 from multiprocessing import Process
 from torch.distributed.elastic.multiprocessing import Std, start_processes
-from util import GameData
+from util import *
+from model.model import AlphaZeroNet
+from model.wrapper import ModelWrapper
 
 import logging
 logger = logging.getLogger(__name__)
 
 import numpy as np
-
-
-class PlayerStats:
-    def __init__(self, n_win: int = 0, n_lose: int = 0, n_draw: int = 0):
-        self.n_win = n_win
-        self.n_lose = n_lose
-        self.n_draw = n_draw
-
-    def __repr__(self):
-        return f"Win: {self.n_win}, Lose: {self.n_lose}, Draw: {self.n_draw}"
-
-    @property
-    def n_match(self):
-        return self.n_win + self.n_lose + self.n_draw
-
-    @property
-    def win_rate(self):
-        return self.n_win / self.n_match
-
-    @property
-    def unbeaten_rate(self):
-        return 1 - self.n_lose / self.n_match
-
-    def update(self, reward):
-        if reward == 1:
-            self.n_win += 1
-        elif reward == -1:
-            self.n_lose += 1
-        else:
-            self.n_draw += 1
-
-    def __add__(self, other: "PlayerStats"):
-        return PlayerStats(
-            self.n_win + other.n_win,
-            self.n_lose + other.n_lose,
-            self.n_draw + other.n_draw
-        )
-
+import torch
+from pathlib import Path
 
 def log_devide_line(n=50):
     logger.info("--"*n)
@@ -122,3 +88,121 @@ def multi_match(game:BaseGame, player1:PUCTPlayer, player2:PUCTPlayer, n_match=1
             save_sgf(1, i, data)
 
     return first_play, second_play
+
+
+def main():
+    import argparse
+
+    logger.setLevel(logging.INFO)
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    logger.addHandler(console_handler)
+
+    GAME_CLASS = {
+        'tictactoe': TicTacToeGame,
+        'gobang': GobangGame,
+        'go': GoGame,
+    }
+
+    PLAYER_CLASS = {
+        'human': HumanPlayer,
+        'random': RandomPlayer,
+        'alphabeta': AlphaBetaPlayer,
+        'uct': lambda: UCTPlayer(config, deterministic=args.deterministic, log_policy=args.log_policy),
+        'uct2': lambda: UCTPlayer(config2, deterministic=args.deterministic, log_policy=args.log_policy),
+        'puct': lambda: PUCTPlayer(config, load_model(args.model_path), deterministic=args.deterministic),
+        'puct2': lambda: PUCTPlayer(config2, load_model(args.model_path2), deterministic=args.deterministic),
+    }
+
+    parser = argparse.ArgumentParser(description='Pit two players against each other')
+    parser.add_argument('--seed', type=int, help='Random seed')
+    parser.add_argument('--quiet', action='store_true', help='Do not print the game state')
+    parser.add_argument('--game', choices=GAME_CLASS.keys(), default='tictactoe', help='Game to play')
+    parser.add_argument('--args', type=int, nargs='*', help='Arguments for the game')
+    parser.add_argument('--players', choices=PLAYER_CLASS.keys(), nargs=2, default=['random', 'alphabeta'], help='Players to play')
+    parser.add_argument('--n_match', type=int, help='Number of matches to play')
+    parser.add_argument('--C', type=float, default=1.0, help='C value for UCTPlayer')
+    parser.add_argument('--n_rollout', type=int, default=7, help='Number of rollouts for UCTPlayer')
+    parser.add_argument('--n_search', type=int, default=64, help='Number of searches for UCTPlayer')
+    parser.add_argument('--temperature', type=float, default=1.0, help='Temperature for UCTPlayer')
+    parser.add_argument('--deterministic', action='store_true', help='Deterministic UCTPlayer or PUCTPlayer')
+    parser.add_argument("--log_policy", action="store_true", help="Log policy of UCTPlayer")
+    parser.add_argument('--C2', type=float, default=1.0, help='C value for UCTPlayer 2')
+    parser.add_argument('--n_rollout2', type=int, default=7, help='Number of rollouts for UCTPlayer 2')
+    parser.add_argument('--n_search2', type=int, default=64, help='Number of searches for UCTPlayer 2')
+    parser.add_argument('--temperature2', type=float, default=1.0, help='Temperature for UCTPlayer 2')
+    parser.add_argument('--model_path', type=str, help='Path to the model for PUCTPlayer')
+    parser.add_argument('--model_path2', type=str, help='Path to the model for PUCTPlayer 2')
+    parser.add_argument('--sgf_path', type=str, help='Save sgf file')
+    parser.add_argument('--device', type=str, help='Device for PUCTPlayer')
+
+    args = parser.parse_args()
+
+    # set seed to reproduce the result
+    if args.seed is not None:
+        np.random.seed(args.seed)
+
+    game_args = args.args if args.args is not None else []
+    game: BaseGame = GAME_CLASS[args.game](*game_args)
+
+    # config for MCTS
+    config = UCTMCTSConfig(
+        C=args.C,
+        n_rollout=args.n_rollout,
+        n_search=args.n_search,
+        temperature=args.temperature,
+    )
+
+    config2 = UCTMCTSConfig(
+        C=args.C2,
+        n_rollout=args.n_rollout2,
+        n_search=args.n_search2,
+        temperature=args.temperature2,
+    )
+
+    # load model
+    device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
+
+    def load_model(model_path: str) -> ModelWrapper:
+        model = AlphaZeroNet(game.observation_size, game.action_space_size, device=device)
+        model = ModelWrapper(game.observation_size, game.action_space_size, model)
+        model.load_checkpoint(model_path)
+        return model
+
+    # player initialization
+    player1 = PLAYER_CLASS[args.players[0]]()
+    player2 = PLAYER_CLASS[args.players[1]]()
+
+    result_text = [
+        f"Player 1 ({player1}) win",
+        f"Player 2 ({player2}) win",
+        "Draw"
+    ]
+    
+    # single match
+    if args.n_match is None:
+        reward, data = pit(game, player1, player2, log_output=not args.quiet)
+        if args.quiet:
+            print(result_text[0 if reward > 0 else 1 if reward < 0 else 2])
+        if args.sgf_path:
+            Path(args.sgf_path).write_text(data.to_sgf())
+    else:
+        if args.sgf_path:
+            sgf_path = Path(args.sgf_path)
+            sgf_path.mkdir(parents=True, exist_ok=True)
+
+            def save_sgf(role: int, i: int, data: GameData):
+                sgf_file = sgf_path / f'pit-{"AB"[role]}{i}-{format_datetime()}.sgf'
+                sgf_file.write_text(data.to_sgf())
+
+        else:
+            save_sgf = None
+
+        first_play, second_play = multi_match(game, player1, player2, n_match=args.n_match, save_sgf=save_sgf)
+        print(f"[EVALUATION RESULT]: {first_play + second_play}")
+        print(f"[EVALUATION RESULT]:(first)  {first_play}")
+        print(f"[EVALUATION RESULT]:(second) {second_play}")
+
+
+if __name__ == "__main__":
+    main()

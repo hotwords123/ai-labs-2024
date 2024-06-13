@@ -7,6 +7,43 @@ def format_datetime(dt: datetime | None = None) -> str:
     return dt.strftime('%Y%m%d-%H%M%S')
 
 
+class PlayerStats:
+    def __init__(self, n_win: int = 0, n_lose: int = 0, n_draw: int = 0):
+        self.n_win = n_win
+        self.n_lose = n_lose
+        self.n_draw = n_draw
+
+    def __repr__(self):
+        return f"Win: {self.n_win}, Lose: {self.n_lose}, Draw: {self.n_draw}"
+
+    @property
+    def n_match(self):
+        return self.n_win + self.n_lose + self.n_draw
+
+    @property
+    def win_rate(self):
+        return self.n_win / self.n_match
+
+    @property
+    def unbeaten_rate(self):
+        return 1 - self.n_lose / self.n_match
+
+    def update(self, reward):
+        if reward == 1:
+            self.n_win += 1
+        elif reward == -1:
+            self.n_lose += 1
+        else:
+            self.n_draw += 1
+
+    def __add__(self, other: "PlayerStats"):
+        return PlayerStats(
+            self.n_win + other.n_win,
+            self.n_lose + other.n_lose,
+            self.n_draw + other.n_draw
+        )
+
+
 class GameMove(NamedTuple):
     player: int
     action: int
