@@ -95,13 +95,16 @@ class AlphaZero:
                 action = np.argmax(policy)
 
             state, reward, done = env.step(action)
-            comment = '\n'.join((
-                f'Value: {mcts.root.value:.3f}',
+            comments = [
                 f'Priors: {self.format_top_moves(mcts.root.child_priors)}',
                 f'Top moves: {self.format_top_moves(policy)}',
-                f'PV: {" ".join(self.format_action(a) for a in mcts.get_path())}'
-            ))
-            data.add_move(player, action, comment)
+                f'PV: {self.format_node(mcts.root, 0)}',
+            ]
+            comments.extend(
+                f'- {self.format_action(node.action)}: {self.format_node(node, i + 1)}'
+                for i, node in enumerate(mcts.get_path())
+            )
+            data.add_move(player, action, '\n'.join(comments))
             if done:
                 reward *= player
                 data.set_result(reward)
@@ -127,6 +130,13 @@ class AlphaZero:
         else:
             x, y = action % n, action // n
             return 'ABCDEFGHJKLMNOPQRST'[x] + str(n - y)
+
+    def format_node(self, node: puct_mcts.MCTSNode, depth: int) -> str:
+        V = node.value
+        N = np.sum(node.child_N_visit)
+        Q = np.sum(node.child_V_total) / N if N > 0 else V
+        player = (-1)**depth
+        return f'V/{V * player:.3f} Q/{Q * player:.3f} N/{N}'
 
     def save_sgf(self, sgf_name: str, data: GameData):
         if not self.config.sgf_path:

@@ -141,7 +141,7 @@ class PUCTMCTS:
 
         return self.get_policy(self.root)
 
-    def get_path(self, node: MCTSNode = None) -> list[int]:
+    def get_path(self, node: MCTSNode = None) -> list[MCTSNode]:
         """
         Prints the predicted best path starting from the given node.
         """
@@ -152,5 +152,5 @@ class PUCTMCTS:
             if not node.has_child(action):
                 break
             node = node.get_child(action)
-            path.append(action)
+            path.append(node)
         return path
