@@ -43,6 +43,15 @@ class PlayerStats:
             self.n_draw + other.n_draw
         )
 
+    def __iadd__(self, other: "PlayerStats"):
+        self.n_win += other.n_win
+        self.n_lose += other.n_lose
+        self.n_draw += other.n_draw
+        return self
+
+    def inverse(self):
+        return PlayerStats(self.n_lose, self.n_win, self.n_draw)
+
 
 class GameMove(NamedTuple):
     player: int
