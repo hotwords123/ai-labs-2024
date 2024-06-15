@@ -1,6 +1,5 @@
 from datetime import datetime
-from typing import NamedTuple
-import re
+from sgf import *
 
 def format_datetime(dt: datetime | None = None) -> str:
     dt = dt or datetime.now()
@@ -53,56 +52,55 @@ class PlayerStats:
         return PlayerStats(self.n_lose, self.n_win, self.n_draw)
 
 
-class GameMove(NamedTuple):
-    player: int
-    action: int
-    comment: str
-
-
 class GameData:
-    PLAYER_MAP = {1: 'B', -1: 'W'}
-    ESCAPE_CHARS = re.compile(r'[\]:\\]')
+    PLAYER_MAP = {1: "B", -1: "W"}
 
-    def __init__(self, n: int, **kwargs):
+    def __init__(self, n: int, game: SGFGame | None = None, **kwargs):
         self.n = n
+        self.game = game if game is not None else SGFGame()
+        self.root = self.game.root
+        self.tree = self.game.tree
 
-        self.attr = {'GM': '1', 'FF': '4', 'CA': 'UTF-8', 'SZ': n}
-        for key, value in kwargs.items():
-            self.attr[key] = value
-
-        self.moves: list[GameMove] = []
+        if game is None:
+            props =  {"GM": 1, "FF": 4, "CA": "UTF-8", "SZ": n, **kwargs}
+            for k, v in props.items():
+                self.game.root.set(k, str(v))
 
     def __getitem__(self, key: str):
-        return self.attr[key]
-    
-    def __setitem__(self, key: str, value: object):
-        self.attr[key] = value
+        return self.root.get(key)
 
-    def add_move(self, player: int, action: int, comment: str = ''):
-        self.moves.append(GameMove(player, action, comment))
+    def __setitem__(self, key: str, value: object):
+        self.root.set(key, str(value))
+
+    def format_action(self, action: int) -> str:
+        if action == self.n * self.n:
+            return ""
+        x, y = action % self.n, action // self.n
+        return f"{chr(ord('a') + x)}{chr(ord('a') + y)}"
+
+    def add_move(self, player: int, action: int, comment: str = ""):
+        node = SGFNode()
+        node.set(self.PLAYER_MAP[player], self.format_action(action))
+        if comment:
+            node.set("C", comment)
+        self.tree.nodes.append(node)
 
     def set_result(self, result: float, score: float | None = None):
         if result == 1:
-            self.attr['RE'] = f'B+{score if score is not None else "?"}'
+            self["RE"] = f"B+{score if score is not None else '?'}"
         elif result == -1:
-            self.attr['RE'] = f'W+{score if score is not None else "?"}'
+            self["RE"] = f'W+{score if score is not None else "?"}'
         else:
-            self.attr['RE'] = 'Draw'
+            self["RE"] = "Draw"
 
     def to_sgf(self) -> str:
-        sgf = [''.join(f'{key}[{value}]' for key, value in self.attr.items())]
-        for player, action, comment in self.moves:
-            tag = GameData.PLAYER_MAP[player]
-            if action == self.n * self.n:
-                tag += '[]'
-            else:
-                x, y = action % self.n, action // self.n
-                tag += f'[{chr(ord("a") + x)}{chr(ord("a") + y)}]'
-            if comment:
-                tag += f'C[{self.escape_text(comment)}]'
-            sgf.append(tag)
-        return '(;' + ';'.join(sgf) + ')'
+        return self.game.to_sgf()
 
-    @staticmethod
-    def escape_text(text: str) -> str:
-        return GameData.ESCAPE_CHARS.sub(lambda c: f'\\{c.group()}', text)
+    @classmethod
+    def from_sgf(cls, text: str) -> "GameData":
+        parser = SGFParser(text)
+        collection = parser.parse()
+        assert len(collection.games) == 1, "Only one game is supported"
+
+        game = collection.games[0]
+        return cls(int(game.root.get("SZ")), game=game)
