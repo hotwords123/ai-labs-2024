@@ -104,3 +104,33 @@ class GameData:
 
         game = collection.games[0]
         return cls(int(game.root.get("SZ")), game=game)
+
+
+class SGFFile:
+    def __init__(
+        self, file: str, mode = 'w',
+        prefix: str = '',
+        props: dict[str, object] | None = None
+    ):
+        self.file = open(file, mode=mode)
+        self.prefix = prefix
+        self.props = props or {}
+
+    def close(self):
+        self.file.close()
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def save(self, name: str, data: GameData):
+        if self.file is not None:
+            dt = datetime.now()
+            data["GN"] = f"{self.prefix}{name}_{format_datetime(dt)}"
+            data["DT"] = dt.strftime('%Y-%m-%d')
+            for k, v in self.props.items():
+                data[k] = v
+            self.file.write(data.to_sgf())
+            self.file.flush()

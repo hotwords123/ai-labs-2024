@@ -1,10 +1,11 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import NamedTuple
+from dataclasses import dataclass
 
 
-class AlphaZeroNetConfig(NamedTuple):
+@dataclass
+class AlphaZeroNetConfig:
     in_channels: int = 2
     num_filters: int = 64
     num_residual_blocks: int = 3

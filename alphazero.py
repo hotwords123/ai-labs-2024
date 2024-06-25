@@ -63,7 +63,7 @@ class AlphaZero:
         self.train_eamples_queue = [] 
         self.checkpoint_dir = Path(config.checkpoint_path) / config.job_id
     
-    def execute_episode(self, sgf_name: str | None = None):
+    def execute_episode(self):
         # collect examples from one game episode
         train_examples = []
         data = GameData(
@@ -95,28 +95,35 @@ class AlphaZero:
                 action = np.argmax(policy)
 
             state, reward, done = env.step(action)
+
+            # Generate comments for the move
+            pv = mcts.get_path()
+            color = {1: "B", -1: "W"}[player]
             comments = [
                 f'Priors: {self.format_top_moves(mcts.root.child_priors)}',
                 f'Top moves: {self.format_top_moves(policy)}',
-                f'PV: {self.format_node(mcts.root, 0)}',
+                f'PV: {color}{" ".join(self.format_action(node.action) for node in pv)}',
+                f'Root: {self.format_node(mcts.root, 0)}'
             ]
             comments.extend(
-                f'- {self.format_action(node.action)}: {self.format_node(node, i + 1)}'
-                for i, node in enumerate(mcts.get_path())
+                f'{i + 1}. {self.format_action(node.action)} {self.format_node(node, i + 1)}'
+                for i, node in enumerate(pv)
             )
             data.add_move(player, action, '\n'.join(comments))
+
             if done:
                 reward *= player
                 data.set_result(reward)
                 examples = [(l_state, l_pi, reward * l_player) for l_state, l_pi, l_player in train_examples] # [(state, pi, reward), ...]
-                if sgf_name:
-                    self.save_sgf(sgf_name, data)
-                return examples
+                return examples, data
             mcts = mcts.get_subtree(action)
             if mcts is None:
                 mcts = puct_mcts.PUCTMCTS(env, self.net, mcts_config)
 
     def format_top_moves(self, policy: np.ndarray, top_n: int = 10, p_threshold: float = 0.01) -> str:
+        """
+        Format the top moves for SGF comments, e.g. "A1(0.123) B2(0.456) C3(0.789)".
+        """
         top_indices = np.argsort(policy)[::-1][:top_n]
         return ' '.join(
             f'{self.format_action(i)}({policy[i]:.3f})'
@@ -132,33 +139,39 @@ class AlphaZero:
             return 'ABCDEFGHJKLMNOPQRST'[x] + str(n - y)
 
     def format_node(self, node: puct_mcts.MCTSNode, depth: int) -> str:
+        """
+        Format the node for SGF comments, e.g. "V / Q / N".
+        The estimated value and utility function are from the perspective of the current player.
+        """
         V = node.value
         N = np.sum(node.child_N_visit)
         Q = np.sum(node.child_V_total) / N if N > 0 else V
         player = (-1)**depth
-        return f'V/{V * player:.3f} Q/{Q * player:.3f} N/{N}'
-
-    def save_sgf(self, sgf_name: str, data: GameData):
-        if not self.config.sgf_path:
-            return
-        sgf_file = Path(self.config.sgf_path) / self.config.job_id / sgf_name
-        sgf_file.parent.mkdir(parents=True, exist_ok=True)
-        sgf_file.write_text(data.to_sgf())
+        return f'{V * player:.3f} / {Q * player:.3f} / {N}'
     
-    def evaluate(self, sgf_prefix: str | None = None):
+    def evaluate(self, sgf_file: SGFFile | None = None):
         player = PUCTPlayer(self.mcts_config, self.net, deterministic=True)
         # baseline_player = AlphaBetaPlayer()
         baseline_player = RandomPlayer()
         # baseline_player = UCTPlayer(UCTMCTSConfig(n_rollout=9, n_search=33))
-        if self.config.sgf_path and sgf_prefix:
-            def save_sgf(role: int, i: int, data: GameData):
-                self.save_sgf(f'{sgf_prefix}eval-{"AB"[role]}{i}_{format_datetime()}.sgf', data)
-        else:
-            save_sgf = None
+        def save_sgf(role: int, i: int, data: GameData):
+            if sgf_file is not None:
+                sgf_file.save(f'{["black", "white"][role]}_{i}', data)
         first_play, second_play = multi_match(self.env, player, baseline_player, self.config.n_match_eval, save_sgf=save_sgf)
         logger.info(f"[EVALUATION RESULT]: {first_play + second_play}")
         logger.info(f"[EVALUATION RESULT]:(first)  {first_play}")
         logger.info(f"[EVALUATION RESULT]:(second) {second_play}")
+
+    def open_sgf(self, epoch: str, name: str, prefix: str = '') -> SGFFile:
+        sgf_dir = Path(self.config.sgf_path) / self.config.job_id / epoch
+        sgf_dir.mkdir(parents=True, exist_ok=True)
+        comment = "\n".join([
+            f"Config: {self.config.__dict__}",
+            f"MCTS Config: {self.mcts_config.__dict__}",
+            f"Model Training Config: {self.net.config.__dict__}",
+            f"Model Config: {self.net.net.config.__dict__}",
+        ])
+        return SGFFile(sgf_dir / f'{name}_{format_datetime()}.sgf', prefix=prefix, props={"C": comment})
     
     def learn(self, last_epoch: int = 0):
         if last_epoch > 0:
@@ -166,14 +179,16 @@ class AlphaZero:
 
         for iter in range(last_epoch + 1, self.config.n_train_iter + 1):
             logger.info(f"------ Start Self-Play Iteration {iter} ------")
-            
+
             # collect new examples
             T = tqdm(range(self.config.n_match_train), desc="Self Play")
             cnt = ResultCounter()
-            for i in T:
-                episode = self.execute_episode(sgf_name=f'iter{iter}/train-{i}_{format_datetime()}.sgf')
-                self.train_eamples_queue += episode
-                cnt.add(episode[0][-1], 1)
+            with self.open_sgf(f'iter{iter}', 'train', prefix='train_') as f:
+                for i in T:
+                    episode, data = self.execute_episode()
+                    self.train_eamples_queue += episode
+                    cnt.add(episode[0][-1], 1)
+                    f.save(f"{i}", data)
             logger.info(f"[NEW TRAIN DATA COLLECTED]: {str(cnt)}")
             
             # pop old examples
@@ -192,7 +207,8 @@ class AlphaZero:
 
     def eval(self, checkpoint_name: str = 'best'):
         self.net.load_checkpoint(self.checkpoint_dir / f'{checkpoint_name}.pth.tar')
-        self.evaluate(sgf_prefix=f'{checkpoint_name.replace("train-", "iter")}/')
+        with self.open_sgf(checkpoint_name.replace("train-", "iter"), 'eval', prefix='eval_') as f:
+            self.evaluate(sgf_file=f)
 
 
 GAME_CLASS = {

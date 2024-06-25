@@ -178,30 +178,31 @@ def main():
         f"Player 2 ({player2}) win",
         "Draw"
     ]
+
+    if args.sgf_path:
+        sgf_file = SGFFile(args.sgf_path, prefix='pit_', props={"C": f"Args: {args.__dict__}"})
+    else:
+        sgf_file = None
     
     # single match
     if args.n_match is None:
         reward, data = pit(game, player1, player2, log_output=not args.quiet)
         if args.quiet:
             print(result_text[0 if reward > 0 else 1 if reward < 0 else 2])
-        if args.sgf_path:
-            Path(args.sgf_path).write_text(data.to_sgf())
+        if sgf_file is not None:
+            sgf_file.save("match", data)
     else:
-        if args.sgf_path:
-            sgf_path = Path(args.sgf_path)
-            sgf_path.mkdir(parents=True, exist_ok=True)
-
-            def save_sgf(role: int, i: int, data: GameData):
-                sgf_file = sgf_path / f'pit-{"AB"[role]}{i}-{format_datetime()}.sgf'
-                sgf_file.write_text(data.to_sgf())
-
-        else:
-            save_sgf = None
+        def save_sgf(role: int, i: int, data: GameData):
+            if sgf_file is not None:
+                sgf_file.save(f'{["black", "white"][role]}_{i}', data)
 
         first_play, second_play = multi_match(game, player1, player2, n_match=args.n_match, save_sgf=save_sgf)
         print(f"[EVALUATION RESULT]: {first_play + second_play}")
         print(f"[EVALUATION RESULT]:(first)  {first_play}")
         print(f"[EVALUATION RESULT]:(second) {second_play}")
+
+    if sgf_file is not None:
+        sgf_file.close()
 
 
 if __name__ == "__main__":
