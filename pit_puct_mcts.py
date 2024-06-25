@@ -70,22 +70,22 @@ def pit(game:BaseGame, player1:PUCTPlayer, player2:PUCTPlayer, log_output:bool=F
     # print(game.observation, reward)
     return reward, data
 
-def multi_match(game:BaseGame, player1:PUCTPlayer, player2:PUCTPlayer, n_match=100, disable_tqdm=False, save_sgf=None):
+def multi_match(game:BaseGame, player1:PUCTPlayer, player2:PUCTPlayer, n_match=100, disable_tqdm=False, sgf_file:SGFFile|None=None):
     assert n_match % 2 == 0 and n_match > 1, "n_match should be an even number greater than 1"
 
     first_play = PlayerStats()
-    for i in trange(n_match//2, disable=disable_tqdm):
+    for i in trange(n_match//2, disable=disable_tqdm, desc="Playing first"):
         reward, data = pit(game, player1, player2, log_output=False)
         first_play.update(reward)
-        if save_sgf is not None:
-            save_sgf(0, i, data)
+        if sgf_file is not None:
+            sgf_file.save(f'black_{i}', data)
 
     second_play = PlayerStats()
-    for i in trange(n_match//2, disable=disable_tqdm):
+    for i in trange(n_match//2, disable=disable_tqdm, desc="Playing second"):
         reward, data = pit(game, player2, player1, log_output=False)
         second_play.update(-reward)
-        if save_sgf is not None:
-            save_sgf(1, i, data)
+        if sgf_file is not None:
+            sgf_file.save(f'white_{i}', data)
 
     return first_play, second_play
 
@@ -192,11 +192,7 @@ def main():
         if sgf_file is not None:
             sgf_file.save("match", data)
     else:
-        def save_sgf(role: int, i: int, data: GameData):
-            if sgf_file is not None:
-                sgf_file.save(f'{["black", "white"][role]}_{i}', data)
-
-        first_play, second_play = multi_match(game, player1, player2, n_match=args.n_match, save_sgf=save_sgf)
+        first_play, second_play = multi_match(game, player1, player2, n_match=args.n_match, sgf_file=sgf_file)
         print(f"[EVALUATION RESULT]: {first_play + second_play}")
         print(f"[EVALUATION RESULT]:(first)  {first_play}")
         print(f"[EVALUATION RESULT]:(second) {second_play}")
