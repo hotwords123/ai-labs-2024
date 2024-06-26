@@ -62,20 +62,23 @@ class AlphaZero:
         self.train_eamples_queue = [] 
         self.checkpoint_dir = Path(config.checkpoint_path) / config.job_id
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        # if eval_every is set, use the best model for self-play
+        # otherwise, use the latest model
+        self.use_best = config.eval_every > 0
     
     def execute_episode(self, net: ModelWrapper = None):
         """
         Execute one episode of self-play.
 
         Args:
-            net: the neural network used for MCTS, default to the latest model
+            net: the neural network used for MCTS, default to the best model
 
         Returns:
             examples: a list of training examples (state, pi, reward)
             data: game data for saving to SGF file
         """
         if net is None:
-            net = self.net
+            net = self.last_net if self.use_best else self.net
 
         # collect examples from one game episode
         train_examples = []
@@ -168,13 +171,19 @@ class AlphaZero:
         player = (-1)**depth
         return f'{V * player:.3f} / {Q * player:.3f} / {N}'
     
+    def build_puct_player(self, net: ModelWrapper):
+        """
+        Build a PUCT player using the specified neural network.
+        """
+        return PUCTPlayer(self.mcts_config, net, deterministic=True)
+    
     def evaluate(
         self,
         net: ModelWrapper = None,
         baseline_player: BasePlayer = None,
         n_match: int = None,
         sgf_file: SGFFile | None = None,
-    ):
+    ) -> tuple[PlayerStats, PlayerStats]:
         """
         Evaluate the model against a baseline player.
 
@@ -196,8 +205,8 @@ class AlphaZero:
             # baseline_player = UCTPlayer(UCTMCTSConfig(n_rollout=9, n_search=33))
         if n_match is None:
             n_match = self.config.n_match_eval
-        
-        player = PUCTPlayer(self.mcts_config, net, deterministic=True)
+            
+        player = self.build_puct_player(net)
         first_play, second_play = multi_match(self.env, player, baseline_player, n_match, sgf_file=sgf_file)
         logger.info(f"[EVALUATION RESULT]: {first_play + second_play}")
         logger.info(f"[EVALUATION RESULT]:(first)  {first_play}")
@@ -239,23 +248,12 @@ class AlphaZero:
                 logger.warning("Best model not found, using the latest model instead")
                 self.last_net.net.load_state_dict(self.net.net.state_dict())
 
-        # if eval_every is set, use the best model for self-play
-        # otherwise, use the latest model
-        use_best = self.config.eval_every > 0    
-
         for iter in range(last_epoch + 1, self.config.n_train_iter + 1):
             logger.info(f"------ Start Self-Play Iteration {iter} ------")
 
             # collect new examples
-            T = tqdm(range(self.config.n_match_train), desc="Self Play")
-            cnt = ResultCounter()
             with self.open_sgf(f'iter{iter}', 'train', prefix='train_') as f:
-                for i in T:
-                    episode, data = self.execute_episode(self.last_net if use_best else self.net)
-                    self.train_eamples_queue += episode
-                    cnt.add(episode[0][-1], 1)
-                    f.save(f"{i}", data)
-            logger.info(f"[NEW TRAIN DATA COLLECTED]: {str(cnt)}")
+                self.self_play(f)
             
             # pop old examples
             if len(self.train_eamples_queue) > self.config.max_queue_length:
@@ -268,19 +266,43 @@ class AlphaZero:
             logger.info(f"[TRAIN DATA SIZE]: {len(train_data)}")
 
             self.net.train(train_data)
-            self.net.save_checkpoint(self.checkpoint_dir / f'train-{iter}.pth.tar')
+            self.sync_model('latest', f'train-{iter}.pth.tar')
 
-            if use_best and iter % self.config.eval_every == 0:
-                # evaluate the model against the best model to decide whether to update
-                opponent = PUCTPlayer(self.mcts_config, self.last_net, deterministic=True)
+            if self.use_best and iter % self.config.eval_every == 0:
                 with self.open_sgf(f'iter{iter}', 'eval', prefix='eval_') as f:
-                    first_play, second_play = self.evaluate(baseline_player=opponent, n_match=self.config.n_match_update, sgf_file=f)
-                    combined = first_play + second_play
-                    score = (combined.n_win + 0.5 * combined.n_draw) / combined.n_match
+                    stats = self.eval_update(f)
+                    score = (stats.n_win + 0.5 * stats.n_draw) / stats.n_match
                     if score > self.config.update_threshold:
                         self.last_net.net.load_state_dict(self.net.net.state_dict())
-                        self.last_net.save_checkpoint(self.checkpoint_dir / 'best.pth.tar')
-                        logger.info(f"[MODEL UPDATED]: {iter}")
+                        self.sync_model('best', 'best.pth.tar')
+                        logger.info(f"[MODEL UPDATED]: iteration {iter}")
+
+    def self_play(self, sgf_file: SGFFile):
+        """
+        Collect new examples using self-play.
+        """
+        cnt = ResultCounter()
+        for i in tqdm(range(self.config.n_match_train), desc="Self Play"):
+            episode, data = self.execute_episode()
+            self.train_eamples_queue += episode
+            cnt.add(episode[0][-1], 1)
+            sgf_file.save(f"{i}", data)
+        logger.info(f"[NEW TRAIN DATA COLLECTED]: {str(cnt)}")
+
+    def eval_update(self, sgf_file: SGFFile) -> PlayerStats:
+        """
+        Evaluate the model against the best model to decide whether to update.
+        """
+        opponent = self.build_puct_player(self.last_net)
+        first_play, second_play = self.evaluate(baseline_player=opponent, n_match=self.config.n_match_update, sgf_file=sgf_file)
+        return first_play + second_play
+    
+    def sync_model(self, target: str, filename: str):
+        """
+        Save the model to a checkpoint file.
+        """
+        net = self.last_net if target == 'best' else self.net
+        net.save_checkpoint(self.checkpoint_dir / filename)
 
     def eval(self, checkpoint_name: str = 'best'):
         """
@@ -350,12 +372,14 @@ def parse_args():
     subparser.add_argument('--n_match_eval', type=int, default=20, help='number of matches for evaluating the model')
     subparser.add_argument('--checkpoint-name', type=str, default='best', help='model checkpoint to evaluate')
 
-    return parser.parse_args()
+    args = parser.parse_args()
+    if not args.job_id:
+        args.job_id = '_'.join((args.mode, format_datetime(), str(args.seed)))
+
+    return args
 
 
-if __name__ == "__main__":
-    args = parse_args()
-    
+def build_alphazero(args, device: torch.device, logger: logging.Logger, cls = AlphaZero):
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -370,7 +394,7 @@ if __name__ == "__main__":
     
     config = AlphaZeroConfig(
         # General settings
-        job_id = args.job_id or '_'.join((args.mode, format_datetime(), str(args.seed))),
+        job_id = args.job_id,
         checkpoint_path=args.checkpoint_path,
         sgf_path=args.sgf_path,
         # Reinforcement learning settings
@@ -402,15 +426,20 @@ if __name__ == "__main__":
             dropout=args.dropout,
             weight_decay=args.weight_decay,
         )
-
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     env = GAME_CLASS[args.game](*args.args)
     model_config = AlphaZeroNetConfig()
     net = AlphaZeroNet(env.observation_size, env.action_space_size, config=model_config, device=device)
     net = ModelWrapper(env.observation_size, env.action_space_size, net, model_training_config)
     
-    alphazero = AlphaZero(env, net, config, mcts_config)
+    return cls(env, net, config, mcts_config)
+
+
+if __name__ == "__main__":
+    args = parse_args()
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    alphazero = build_alphazero(args, device, logger=logger)
+    
     if args.mode == "eval":
         alphazero.eval(args.checkpoint_name)
     else:
