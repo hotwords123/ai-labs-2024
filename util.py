@@ -27,6 +27,11 @@ class PlayerStats:
     def unbeaten_rate(self):
         return 1 - self.n_lose / self.n_match
 
+    def clear(self):
+        self.n_win = 0
+        self.n_lose = 0
+        self.n_draw = 0
+
     def update(self, reward):
         if reward == 1:
             self.n_win += 1
@@ -85,11 +90,11 @@ class GameData:
             node.set("C", comment)
         self.tree.nodes.append(node)
 
-    def set_result(self, result: float, score: float | None = None):
+    def set_result(self, result: float, score = None):
         if result == 1:
             self["RE"] = f"B+{score if score is not None else '?'}"
         elif result == -1:
-            self["RE"] = f'W+{score if score is not None else "?"}'
+            self["RE"] = f"W+{score if score is not None else '?'}"
         else:
             self["RE"] = "Draw"
 

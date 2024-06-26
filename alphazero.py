@@ -12,6 +12,7 @@ from tqdm import tqdm
 from players import *
 
 from pathlib import Path
+from dataclasses import dataclass
 
 from env import *
 import torch
@@ -20,36 +21,37 @@ from pit_puct_mcts import multi_match
 
 import logging
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+logger.addHandler(console_handler)
 
 
+@dataclass
 class AlphaZeroConfig():
-    def __init__(
-        self, 
-        job_id: str,
-        n_train_iter:int=300,
-        n_match_train:int=20,
-        n_match_update:int=20,
-        n_match_eval:int=20,
-        max_queue_length:int=8000,
-        update_threshold:float=0.501,
-        eval_every:int=5,
-        opening_moves:int=10,
-        checkpoint_path:str="checkpoint",
-        sgf_path:str="sgf",
-    ):
-        self.job_id = job_id
+    # General settings
+    job_id: str
+    checkpoint_path: str = "checkpoint"
+    sgf_path: str = "sgf"
+    # Reinforcement learning settings
+    n_train_iter: int = 300
+    n_match_train: int = 20
+    n_match_update: int = 20
+    n_match_eval: int = 20
+    max_queue_length: int = 8000
+    update_threshold: float = 0.501
+    use_latest: bool = False
+    eval_every: int = 5
+    eval_temperature: float = 0.1
+    enable_resign: bool = False
+    resign_threshold: float = -0.90
+    n_resign_min_turn: int = 20
+    n_resign_low_turn: int = 3
+    resign_test_ratio: float = 0.1
+    resign_fpr: float = 0.05
+    # MCTS settings
+    opening_moves: int = 10
 
-        self.n_train_iter = n_train_iter
-        self.n_match_train = n_match_train
-        self.max_queue_length = max_queue_length
-        self.n_match_update = n_match_update
-        self.n_match_eval = n_match_eval
-        self.update_threshold = update_threshold
-        self.eval_every = eval_every
-        self.opening_moves = opening_moves
-        
-        self.checkpoint_path = checkpoint_path
-        self.sgf_path = sgf_path
 
 class AlphaZero:
     def __init__(self, env:BaseGame, net:ModelWrapper, config:AlphaZeroConfig, mcts_config:puct_mcts.MCTSConfig):
@@ -62,9 +64,8 @@ class AlphaZero:
         self.train_eamples_queue = [] 
         self.checkpoint_dir = Path(config.checkpoint_path) / config.job_id
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
-        # if eval_every is set, use the best model for self-play
-        # otherwise, use the latest model
-        self.use_best = config.eval_every > 0
+        # Resignation statistics for testing false positives
+        self.resign_test_stats = PlayerStats()
     
     def execute_episode(self, net: ModelWrapper = None):
         """
@@ -78,7 +79,7 @@ class AlphaZero:
             data: game data for saving to SGF file
         """
         if net is None:
-            net = self.last_net if self.use_best else self.net
+            net = self.net if self.config.use_latest else self.last_net
 
         # collect examples from one game episode
         train_examples = []
@@ -93,6 +94,10 @@ class AlphaZero:
         mcts_config = copy.copy(self.mcts_config)
         mcts = puct_mcts.PUCTMCTS(env, net, mcts_config)
         episodeStep = 0
+
+        resign_enabled = self.config.enable_resign and np.random.rand() >= self.config.resign_test_ratio
+        resign_counter = {1: 0, -1: 0}
+        resigned_player = None
 
         while True:
             player = env.current_player
@@ -131,13 +136,32 @@ class AlphaZero:
             if done:
                 reward *= player
                 data.set_result(reward)
-                examples = [(l_state, l_pi, reward * l_player) for l_state, l_pi, l_player in train_examples] # [(state, pi, reward), ...]
-                return examples, data
+                if resigned_player is not None:
+                    self.resign_test_stats.update(reward * resigned_player)
+                break
+
+            # Check for resignation
+            if resigned_player is None:
+                utility = np.sum(mcts.root.child_V_total) / np.sum(mcts.root.child_N_visit)
+                if utility < self.config.resign_threshold:
+                    resign_counter[player] += 1
+                else:
+                    resign_counter[player] = 0
+
+                if episodeStep > self.config.n_resign_min_turn and resign_counter[player] >= self.config.n_resign_low_turn:
+                    resigned_player = player
+                    if resign_enabled:
+                        reward = -player
+                        data.set_result(reward, score='R')
+                        break
 
             # Update MCTS with the new state
             mcts = mcts.get_subtree(action)
             if mcts is None:
                 mcts = puct_mcts.PUCTMCTS(env, net, mcts_config)
+
+        examples = [(state, pi, reward * player) for state, pi, player in train_examples] # [(state, pi, reward), ...]
+        return examples, data
 
     def format_top_moves(self, policy: np.ndarray, top_n: int = 10, p_threshold: float = 0.01) -> str:
         """
@@ -175,7 +199,11 @@ class AlphaZero:
         """
         Build a PUCT player using the specified neural network.
         """
-        return PUCTPlayer(self.mcts_config, net, deterministic=True)
+        config = copy.copy(self.mcts_config)
+        # Instead of making the player deterministic, we use a low temperature for evaluation to avoid repeating the same moves
+        config.temperature = self.config.eval_temperature
+        config.with_noise = False
+        return PUCTPlayer(config, net)
     
     def evaluate(
         self,
@@ -242,11 +270,14 @@ class AlphaZero:
         """
         if last_epoch > 0:
             self.net.load_checkpoint(self.checkpoint_dir / f'train-{last_epoch}.pth.tar')
+            self.sync_model('latest', f'train-{last_epoch}.pth.tar')
             try:
                 self.last_net.load_checkpoint(self.checkpoint_dir / f'best.pth.tar')
+                self.sync_model('best', 'best.pth.tar')
             except FileNotFoundError:
                 logger.warning("Best model not found, using the latest model instead")
                 self.last_net.net.load_state_dict(self.net.net.state_dict())
+                self.sync_model('best', f'train-{last_epoch}.pth.tar')
 
         for iter in range(last_epoch + 1, self.config.n_train_iter + 1):
             logger.info(f"------ Start Self-Play Iteration {iter} ------")
@@ -266,14 +297,16 @@ class AlphaZero:
             logger.info(f"[TRAIN DATA SIZE]: {len(train_data)}")
 
             self.net.train(train_data)
+            self.net.save_checkpoint(self.checkpoint_dir / f'train-{iter}.pth.tar')
             self.sync_model('latest', f'train-{iter}.pth.tar')
 
-            if self.use_best and iter % self.config.eval_every == 0:
+            if not self.config.use_latest and iter % self.config.eval_every == 0:
                 with self.open_sgf(f'iter{iter}', 'eval', prefix='eval_') as f:
                     stats = self.eval_update(f)
                     score = (stats.n_win + 0.5 * stats.n_draw) / stats.n_match
                     if score > self.config.update_threshold:
                         self.last_net.net.load_state_dict(self.net.net.state_dict())
+                        self.last_net.save_checkpoint(self.checkpoint_dir / 'best.pth.tar')
                         self.sync_model('best', 'best.pth.tar')
                         logger.info(f"[MODEL UPDATED]: iteration {iter}")
 
@@ -288,6 +321,7 @@ class AlphaZero:
             cnt.add(episode[0][-1], 1)
             sgf_file.save(f"{i}", data)
         logger.info(f"[NEW TRAIN DATA COLLECTED]: {str(cnt)}")
+        logger.info(f"[RESIGNATION TEST]: {self.resign_test_stats}")
 
     def eval_update(self, sgf_file: SGFFile) -> PlayerStats:
         """
@@ -299,10 +333,13 @@ class AlphaZero:
     
     def sync_model(self, target: str, filename: str):
         """
-        Save the model to a checkpoint file.
+        Synchronize the model to workers.
+
+        Args:
+            target: the target model to synchronize (latest or best)
+            filename: the filename of the model
         """
-        net = self.last_net if target == 'best' else self.net
-        net.save_checkpoint(self.checkpoint_dir / filename)
+        pass
 
     def eval(self, checkpoint_name: str = 'best'):
         """
@@ -344,7 +381,15 @@ def parse_args():
     parser.add_argument('--n_match_eval', type=int, default=20, help='number of matches for evaluating the model')
     parser.add_argument('--max_queue_length', type=int, default=40000, help='max length of training examples queue')
     parser.add_argument('--update_threshold', type=float, default=0.501, help='winning rate threshold for updating the model')
+    parser.add_argument('--use_latest', action='store_true', help='always use the latest instead of the best model for self-play')
     parser.add_argument('--eval_every', type=int, default=5, help='evaluate the model every n iterations')
+    parser.add_argument('--eval_temperature', type=float, default=0.1, help='override temperature for evaluation')
+    parser.add_argument('--enable_resign', action='store_true', help='enable resignation for self-play')
+    parser.add_argument('--resign_threshold', type=float, default=-0.90, help='resignation threshold for self-play')
+    parser.add_argument('--n_resign_min_turn', type=int, default=20, help='minimum number of turns before resigning')
+    parser.add_argument('--n_resign_low_turn', type=int, default=3, help='resign if the score is below the threshold for n turns')
+    parser.add_argument('--resign_test_ratio', type=float, default=0.1, help='ratio of games not resigned to test false positives')
+    parser.add_argument('--resign_fpr', type=float, default=0.05, help='allowed false positive rate for resigning')
     # MCTS settings
     parser.add_argument('--n_search', type=int, default=120, help='number of MCTS simulations')
     parser.add_argument('--temperature', type=float, default=1.0, help='temperature for MCTS')
@@ -379,18 +424,10 @@ def parse_args():
     return args
 
 
-def build_alphazero(args, device: torch.device, logger: logging.Logger, cls = AlphaZero):
+def build_alphazero(args, device: torch.device, cls = AlphaZero):
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
-    
-    logger.setLevel(logging.INFO)
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-    logger.addHandler(console_handler)
-    file_handler = logging.FileHandler(args.log_file)
-    file_handler.setLevel(logging.INFO)
-    logger.addHandler(file_handler)
     
     config = AlphaZeroConfig(
         # General settings
@@ -404,7 +441,16 @@ def build_alphazero(args, device: torch.device, logger: logging.Logger, cls = Al
         n_match_eval=args.n_match_eval,
         max_queue_length=args.max_queue_length,
         update_threshold=args.update_threshold,
+        use_latest=args.use_latest,
         eval_every=args.eval_every,
+        eval_temperature=args.eval_temperature,
+        enable_resign=args.enable_resign,
+        resign_threshold=args.resign_threshold,
+        n_resign_min_turn=args.n_resign_min_turn,
+        n_resign_low_turn=args.n_resign_low_turn,
+        resign_test_ratio=args.resign_test_ratio,
+        resign_fpr=args.resign_fpr,
+        # MCTS settings
         opening_moves=args.opening_moves,
     )
 
@@ -437,8 +483,13 @@ def build_alphazero(args, device: torch.device, logger: logging.Logger, cls = Al
 
 if __name__ == "__main__":
     args = parse_args()
+
+    file_handler = logging.FileHandler(args.log_file)
+    file_handler.setLevel(logging.DEBUG)
+    logger.addHandler(file_handler)
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    alphazero = build_alphazero(args, device, logger=logger)
+    alphazero = build_alphazero(args, device)
     
     if args.mode == "eval":
         alphazero.eval(args.checkpoint_name)

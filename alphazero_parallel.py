@@ -12,10 +12,10 @@ from players import *
 
 import logging
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 console_handler = logging.StreamHandler(sys.stdout)
-console_handler.setLevel(logging.DEBUG)
+console_handler.setLevel(logging.INFO)
 logger.addHandler(console_handler)
-logger.setLevel(logging.INFO)
 
 from alphazero import AlphaZero, parse_args, build_alphazero
 from pit_puct_mcts import pit
@@ -26,24 +26,30 @@ def execute_episode_worker(
     rank: str,
     args,
 ):
-    logger.debug(f"[Worker {rank}] Initializing worker {rank}")
+    args = dill.loads(args)
+    args.seed += rank * 100
+
+    log_file = Path(args.log_file)
+    log_file = log_file.with_stem(f"{log_file.stem}_worker{rank}")
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setLevel(logging.DEBUG)
+    logger.addHandler(file_handler)
+
+    logger.info(f"[Worker {rank}] Initializing worker {rank}")
     st0 = time.time()
 
     if torch.cuda.is_available():
         num_gpu = torch.cuda.device_count()
-        gpu_id = (rank + 1) % num_gpu
+        gpu_id = rank % num_gpu
         logger.debug(f"[Worker {rank}] num_gpu={num_gpu} gpu={gpu_id}")
         # os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
         device = torch.device(f"cuda:{gpu_id}")
     else:
         device = torch.device("cpu")
 
-    args = dill.loads(args)
-    args.seed += rank * 100
-    args.log_file = str(Path(args.log_file).with_stem(f"{Path(args.log_file).stem}_worker{rank}"))
-    alphazero = build_alphazero(args, device, logger=logger)
+    alphazero = build_alphazero(args, device)
 
-    logger.debug(f"[Worker {rank}] Ready (init_time={time.time()-st0:.3f})")
+    logger.info(f"[Worker {rank}] Ready (init_time={time.time()-st0:.3f})")
 
     def run_episode():
         episode, data = alphazero.execute_episode()
@@ -57,14 +63,16 @@ def execute_episode_worker(
             alphazero.net.load_checkpoint(alphazero.checkpoint_dir / filename)
         logger.debug(f"[Worker {rank}] Loaded {target} net from {filename}")
 
-    def pit_update(role: int):
-        player1 = alphazero.build_puct_player(alphazero.net)
-        player2 = alphazero.build_puct_player(alphazero.last_net)
+    def pit_update(role: str):
+        player = alphazero.build_puct_player(alphazero.net)
+        opponent = alphazero.build_puct_player(alphazero.last_net)
 
-        if role == -1:
-            player1, player2 = player2, player1
+        if role == "black":
+            players = player, opponent
+        else:
+            players = opponent, player
 
-        reward, data = pit(alphazero.env, player1, player2, log_output=False)
+        reward, data = pit(alphazero.env, *players, log_output=False)
         logger.debug(f"[Worker {rank}] Pit update finished: role={role}, reward={reward}")
         conn.send((reward, data))
 
@@ -72,30 +80,35 @@ def execute_episode_worker(
         try:
             command, *args = conn.recv()
             start_time = time.time()
-            logger.debug(f"[Worker {rank}] Received command {command}")
+            logger.debug(f"[Worker {rank}] Received command {command} (args={args})")
 
             if command == 'close':
                 conn.close()
                 return
-            
+
             elif command == 'run_episode':
                 run_episode(*args)
 
             elif command == 'load_net':
                 load_net(*args)
-                
+
             elif command == 'pit_update':
                 pit_update(*args)
+
+            elif command == 'resign_stats':
+                stats = alphazero.resign_test_stats
+                conn.send(stats)
+                stats.clear()
 
             else:
                 logger.warning(f"[Worker {rank}] Unknown command: {command}")
 
-            logger.debug(f"[Worker {rank}] Finished in {time.time()-start_time:.3f}s")
+            logger.debug(f"[Worker {rank}] Finished {command} in {time.time()-start_time:.3f}s")
 
         except Exception as e:
-            print(e)
+            logger.error(e)
             traceback.print_exc()
-            print(f"[Worker {rank}] shutting down worker-{rank}")
+            logger.warn(f"[Worker {rank}] shutting down worker {rank}")
             if locals().get('conn') and conn.closed == False:
                 conn.close()
             exit(1)
@@ -114,12 +127,12 @@ class AlphaZeroWorker:
         self.worker.start()
 
     def send(self, command, *args):
-        logger.debug(f"[AlphaZeroWorker:{self.rank}] Sending command {command}")
+        logger.debug(f"[AlphaZeroWorker:{self.rank}] Sending command {command} (args={args})")
         self.pipe.send((command, *args))
 
     def recv(self):
         return self.pipe.recv()
-    
+
     def close(self):
         self.pipe.send(("close"))
         self.worker.join()
@@ -141,64 +154,70 @@ class AlphaZeroParallel(AlphaZero):
             worker.start()
 
         logger.info(f"[AlphaZeroParallel] Started {n_worker} workers")
-    
+
     def close(self):
         for worker in self.workers:
             worker.close()
 
     def self_play(self, sgf_file: SGFFile):
-        worker_ids = [i % self.n_worker for i in range(self.config.n_match_train)]
-
         # Send self-play tasks to workers
-        for i in worker_ids:
-            self.workers[i].send('run_episode')
+        tasks = []
+        for i in range(self.config.n_match_train):
+            worker_id = i % self.n_worker
+            self.workers[worker_id].send('run_episode')
+            tasks.append(worker_id)
 
         # Receive self-play results from workers
         stats = PlayerStats()
-        for i in tqdm(worker_ids, desc="Self Play"):
-            episode, data = self.workers[i].recv()
+        for i, worker_id in enumerate(tqdm(tasks, desc="Self Play")):
+            episode, data = self.workers[worker_id].recv()
             self.train_eamples_queue += episode
             stats.update(episode[0][-1])
             sgf_file.save(f"{i}", data)
         logger.info(f"[NEW TRAIN DATA COLLECTED]: {stats}")
 
+        # Collect resignation test stats from workers
+        for worker in self.workers:
+            worker.send('resign_stats')
+            self.resign_test_stats += worker.recv()
+        logger.info(f"[RESIGNATION TEST RESULT]: {self.resign_test_stats}")
+
     def eval_update(self, sgf_file: SGFFile) -> PlayerStats:
-        n_match = self.config.n_match_update
-        worker_ids = [i % self.n_worker for i in range(n_match)]
-        roles = [1] * (n_match//2) + [-1] * (n_match//2)
-        tasks = list(zip(worker_ids, roles))
-
         # Send evaluation tasks to workers
-        for i, role in tasks:
-            self.workers[i].send('pit_update', role)
-        
-        # Receive evaluation results from workers
-        first_play, second_play = PlayerStats(), PlayerStats()
-        for i, role in tqdm(tasks, desc="Evaluation Update"):
-            reward, data = self.workers[i].recv()
-            if role == 1:
-                first_play.update(reward)
-                sgf_file.save(f"black_{i}", data)
-            else:
-                second_play.update(-reward)
-                sgf_file.save(f"white_{i}", data)
+        tasks = []
+        for i in range(self.config.n_match_update):
+            worker_id = i % self.n_worker
+            role, index = ("black", "white")[i % 2], i // 2
+            self.workers[worker_id].send('pit_update', role)
+            tasks.append((worker_id, role, index))
 
-        combined = first_play + second_play
+        # Receive evaluation results from workers
+        stats = {role: PlayerStats() for role in ("black", "white")}
+        for i, (worker_id, role, index) in enumerate(tqdm(tasks, desc="Update Evaluation")):
+            reward, data = self.workers[worker_id].recv()
+            stats[role].update(reward if role == "black" else -reward)
+            sgf_file.save(f"{role}_{index}", data)
+
+        combined = stats['black'] + stats['white']
         logger.info(f"[EVALUATION RESULT]: {combined}")
-        logger.info(f"[EVALUATION RESULT]:(first)  {first_play}")
-        logger.info(f"[EVALUATION RESULT]:(second) {second_play}")
+        logger.info(f"[EVALUATION RESULT]:(black) {stats['black']}")
+        logger.info(f"[EVALUATION RESULT]:(white) {stats['white']}")
         return combined
-    
+
     def sync_model(self, target: str, filename: str):
-        super().sync_model(target, filename)
         for worker in self.workers:
             worker.send('load_net', target, filename)
 
 
 if __name__ == "__main__":
     args = parse_args()
+
+    file_handler = logging.FileHandler(args.log_file)
+    file_handler.setLevel(logging.DEBUG)
+    logger.addHandler(file_handler)
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    alphazero: AlphaZeroParallel = build_alphazero(args, device, logger=logger, cls=AlphaZeroParallel)
+    alphazero: AlphaZeroParallel = build_alphazero(args, device, cls=AlphaZeroParallel)
 
     n_worker = torch.cuda.device_count() if torch.cuda.is_available() else 1
     alphazero.init_workers(n_worker, args)
