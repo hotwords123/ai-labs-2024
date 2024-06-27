@@ -43,10 +43,10 @@ class AlphaZeroConfig():
     n_train_iter: int = 50
     n_match_train: int = 20
     n_match_update: int = 20
-    max_queue_length: int = 40000
-    update_threshold: float = 0.501
+    max_queue_length: int = 300000
+    update_threshold: float = 0.551
     use_latest: bool = False
-    eval_every: int = 5
+    eval_every: int = 1
     enable_resign: bool = False
     resign_threshold: float = -0.90
     n_resign_min_turn: int = 20
@@ -158,7 +158,7 @@ class AlphaZero:
                 else:
                     resign_counter[player] = 0
 
-                if episodeStep > self.config.n_resign_min_turn and resign_counter[player] >= self.config.n_resign_low_turn:
+                if episodeStep > 2 * self.config.n_resign_min_turn and resign_counter[player] >= self.config.n_resign_low_turn:
                     resigned_player = player
                     if resign_enabled:
                         reward = -player
@@ -271,16 +271,16 @@ class AlphaZero:
         ])
         return SGFFile(sgf_dir / f'{name}_{format_datetime()}.sgf', prefix=prefix, props={"C": comment})
     
-    def learn(self, last_epoch: int = 0):
+    def learn(self, last_iter: int = 0):
         """
         Train the model using self-play.
 
         Args:
-            last_epoch: the last epoch number to start from
+            last_iter: the last iteration number to start from
         """
-        if last_epoch > 0:
-            self.net.load_checkpoint(self.checkpoint_dir / f'train-{last_epoch}.pth.tar')
-            self.sync_model('latest', f'train-{last_epoch}.pth.tar')
+        if last_iter > 0:
+            self.net.load_checkpoint(self.checkpoint_dir / f'train-{last_iter}.pth.tar')
+            self.sync_model('latest', f'train-{last_iter}.pth.tar')
 
             try:
                 self.last_net.load_checkpoint(self.checkpoint_dir / f'best.pth.tar')
@@ -288,15 +288,15 @@ class AlphaZero:
             except FileNotFoundError:
                 logger.warning("Best model not found, using the latest model instead")
                 self.last_net.net.load_state_dict(self.net.net.state_dict())
-                self.sync_model('best', f'train-{last_epoch}.pth.tar')
+                self.sync_model('best', f'train-{last_iter}.pth.tar')
 
             try:
-                with open(self.result_dir / f'train-{last_epoch}_data.pkl', 'rb') as f:
+                with open(self.result_dir / f'train-{last_iter}_data.pkl', 'rb') as f:
                     self.train_examples_queue = pickle.load(f)
             except FileNotFoundError:
                 logger.warning("Training data not found, starting from scratch")
 
-        for iter in range(last_epoch + 1, self.config.n_train_iter + 1):
+        for iter in range(last_iter + 1, self.config.n_train_iter + 1):
             logger.info(f"------ Start Self-Play Iteration {iter} ------")
 
             # collect new examples
@@ -402,7 +402,7 @@ def parse_args():
     parser.add_argument('--args', type=int, nargs='*', default=[9], help='Arguments for the game')
 
     # MCTS settings
-    parser.add_argument('--n_search', type=int, default=120, help='number of MCTS simulations')
+    parser.add_argument('--n_search', type=int, default=200, help='number of MCTS simulations')
     parser.add_argument('--temperature', type=float, default=1.0, help='temperature for MCTS')
     parser.add_argument('--eval_temperature', type=float, default=0.1, help='override temperature for evaluation')
     parser.add_argument('--C', type=float, default=1.0, help='exploration constant for MCTS')
@@ -411,16 +411,16 @@ def parse_args():
 
     # Training settings
     subparser = subparsers.add_parser('train')
-    subparser.add_argument('--last_epoch', type=int, default=0, help='last epoch')
+    subparser.add_argument('--last_iter', type=int, default=0, help='last iteration to start from')
 
     # Reinforcement learning settings
     subparser.add_argument('--n_train_iter', type=int, default=50, help='number of training iterations')
     subparser.add_argument('--n_match_train', type=int, default=20, help='number of self-play matches for each training iteration')
     subparser.add_argument('--n_match_update', type=int, default=20, help='number of self-play matches for updating the model')
-    subparser.add_argument('--max_queue_length', type=int, default=40000, help='max length of training examples queue')
-    subparser.add_argument('--update_threshold', type=float, default=0.501, help='winning rate threshold for updating the model')
+    subparser.add_argument('--max_queue_length', type=int, default=300000, help='max length of training examples queue')
+    subparser.add_argument('--update_threshold', type=float, default=0.551, help='winning rate threshold for updating the model')
     subparser.add_argument('--use_latest', action='store_true', help='always use the latest instead of the best model for self-play')
-    subparser.add_argument('--eval_every', type=int, default=5, help='evaluate the model every n iterations')
+    subparser.add_argument('--eval_every', type=int, default=1, help='evaluate the model every n iterations')
     subparser.add_argument('--enable_resign', action='store_true', help='enable resignation for self-play')
     subparser.add_argument('--resign_threshold', type=float, default=-0.90, help='resignation threshold for self-play')
     subparser.add_argument('--n_resign_min_turn', type=int, default=20, help='minimum number of turns before resigning')
@@ -435,8 +435,8 @@ def parse_args():
 
     # Model training settings
     subparser.add_argument('--epochs', type=int, default=10, help='number of epochs for training the model')
-    subparser.add_argument('--batch_size', type=int, default=128, help='batch size for training the model')
-    subparser.add_argument('--lr', type=float, default=0.0007, help='learning rate for training the model')
+    subparser.add_argument('--batch_size', type=int, default=256, help='batch size for training the model')
+    subparser.add_argument('--lr', type=float, default=0.01, help='learning rate for training the model')
     # subparser.add_argument('--dropout', type=float, default=0.3, help='dropout rate for training the model')
     subparser.add_argument('--weight_decay', type=float, default=1e-4, help='weight decay for training the model')
 
@@ -534,4 +534,4 @@ if __name__ == "__main__":
     if args.mode == "eval":
         alphazero.eval(args.checkpoint_name)
     else:
-        alphazero.learn(last_epoch=args.last_epoch)
+        alphazero.learn(last_iter=args.last_iter)

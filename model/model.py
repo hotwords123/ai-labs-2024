@@ -8,7 +8,7 @@ from dataclasses import dataclass
 class AlphaZeroNetConfig:
     in_channels: int = 2
     num_filters: int = 64
-    num_residual_blocks: int = 3
+    num_residual_blocks: int = 4
     policy_num_filters: int = 2
     value_num_filters: int = 1
     value_hidden_size: int = 256

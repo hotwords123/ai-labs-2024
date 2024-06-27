@@ -225,6 +225,6 @@ if __name__ == "__main__":
     if args.mode == "eval":
         alphazero.eval(args.checkpoint_name)
     else:
-        alphazero.learn(last_epoch=args.last_epoch)
+        alphazero.learn(last_iter=args.last_iter)
 
     alphazero.close()
