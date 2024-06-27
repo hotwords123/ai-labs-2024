@@ -127,10 +127,10 @@ def main():
     parser.add_argument('--temperature', type=float, default=1.0, help='Temperature for UCTPlayer')
     parser.add_argument('--deterministic', action='store_true', help='Deterministic UCTPlayer or PUCTPlayer')
     parser.add_argument("--log_policy", action="store_true", help="Log policy of UCTPlayer")
-    parser.add_argument('--C2', type=float, default=1.0, help='C value for UCTPlayer 2')
-    parser.add_argument('--n_rollout2', type=int, default=7, help='Number of rollouts for UCTPlayer 2')
-    parser.add_argument('--n_search2', type=int, default=64, help='Number of searches for UCTPlayer 2')
-    parser.add_argument('--temperature2', type=float, default=1.0, help='Temperature for UCTPlayer 2')
+    parser.add_argument('--C2', type=float, help='C value for UCTPlayer 2')
+    parser.add_argument('--n_rollout2', type=int, help='Number of rollouts for UCTPlayer 2')
+    parser.add_argument('--n_search2', type=int, help='Number of searches for UCTPlayer 2')
+    parser.add_argument('--temperature2', type=float, help='Temperature for UCTPlayer 2')
     parser.add_argument('--model_path', type=str, help='Path to the model for PUCTPlayer')
     parser.add_argument('--model_path2', type=str, help='Path to the model for PUCTPlayer 2')
     parser.add_argument('--sgf_path', type=str, help='Save sgf file')
@@ -153,11 +153,12 @@ def main():
         temperature=args.temperature,
     )
 
+    use_default = lambda x, d: x if x is not None else d
     config2 = UCTMCTSConfig(
-        C=args.C2,
-        n_rollout=args.n_rollout2,
-        n_search=args.n_search2,
-        temperature=args.temperature2,
+        C=use_default(args.C2, args.C),
+        n_rollout=use_default(args.n_rollout2, args.n_rollout),
+        n_search=use_default(args.n_search2, args.n_search),
+        temperature=use_default(args.temperature2, args.temperature),
     )
 
     # load model
