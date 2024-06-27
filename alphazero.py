@@ -13,6 +13,7 @@ from players import *
 
 from pathlib import Path
 from dataclasses import dataclass
+import pickle
 
 from env import *
 import torch
@@ -33,24 +34,28 @@ class AlphaZeroConfig():
     job_id: str
     checkpoint_path: str = "checkpoint"
     sgf_path: str = "sgf"
+    result_path: str = "results"
+
+    # MCTS settings
+    eval_temperature: float = 0.1
+    
     # Reinforcement learning settings
-    n_train_iter: int = 300
+    n_train_iter: int = 50
     n_match_train: int = 20
     n_match_update: int = 20
-    n_match_eval: int = 20
-    max_queue_length: int = 8000
+    max_queue_length: int = 40000
     update_threshold: float = 0.501
     use_latest: bool = False
     eval_every: int = 5
-    eval_temperature: float = 0.1
     enable_resign: bool = False
     resign_threshold: float = -0.90
     n_resign_min_turn: int = 20
     n_resign_low_turn: int = 3
     resign_test_ratio: float = 0.1
-    resign_fpr: float = 0.05
-    # MCTS settings
     opening_moves: int = 10
+
+    # Evaluation settings
+    n_match_eval: int = 20
 
 
 class AlphaZero:
@@ -61,9 +66,14 @@ class AlphaZero:
         self.config = config
         self.mcts_config = mcts_config
         self.mcts = None
-        self.train_eamples_queue = [] 
+        self.train_examples_queue = [] 
+
         self.checkpoint_dir = Path(config.checkpoint_path) / config.job_id
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+        self.result_dir = Path(config.result_path) / config.job_id
+        self.result_dir.mkdir(parents=True, exist_ok=True)
+
         # Resignation statistics for testing false positives
         self.resign_test_stats = PlayerStats()
     
@@ -271,6 +281,7 @@ class AlphaZero:
         if last_epoch > 0:
             self.net.load_checkpoint(self.checkpoint_dir / f'train-{last_epoch}.pth.tar')
             self.sync_model('latest', f'train-{last_epoch}.pth.tar')
+
             try:
                 self.last_net.load_checkpoint(self.checkpoint_dir / f'best.pth.tar')
                 self.sync_model('best', 'best.pth.tar')
@@ -278,6 +289,12 @@ class AlphaZero:
                 logger.warning("Best model not found, using the latest model instead")
                 self.last_net.net.load_state_dict(self.net.net.state_dict())
                 self.sync_model('best', f'train-{last_epoch}.pth.tar')
+
+            try:
+                with open(self.result_dir / f'train-{last_epoch}_data.pkl', 'rb') as f:
+                    self.train_examples_queue = pickle.load(f)
+            except FileNotFoundError:
+                logger.warning("Training data not found, starting from scratch")
 
         for iter in range(last_epoch + 1, self.config.n_train_iter + 1):
             logger.info(f"------ Start Self-Play Iteration {iter} ------")
@@ -287,20 +304,27 @@ class AlphaZero:
                 self.self_play(f)
             
             # pop old examples
-            if len(self.train_eamples_queue) > self.config.max_queue_length:
-                self.train_eamples_queue = self.train_eamples_queue[-self.config.max_queue_length:]
+            if len(self.train_examples_queue) > self.config.max_queue_length:
+                self.train_examples_queue = self.train_examples_queue[-self.config.max_queue_length:]
+
+            # save training data so we can resume training later
+            with open(self.result_dir / f'train-{iter}_data.pkl', 'wb') as f:
+                pickle.dump(self.train_examples_queue, f, protocol=pickle.HIGHEST_PROTOCOL)
             
-            # shuffle examples for training
-            train_data = copy.copy(self.train_eamples_queue)
+            train_data = copy.copy(self.train_examples_queue)
             # shuffling is done by dataloader, so no need to shuffle here
             # shuffle(train_data)
             logger.info(f"[TRAIN DATA SIZE]: {len(train_data)}")
 
-            self.net.train(train_data)
+            loss_history = self.net.train(train_data)
+            logger.info(f"[TRAINING LOSS]: {loss_history.mean(axis=1)}")
+            np.save(self.result_dir / f'train-{iter}_loss.npy', loss_history)
+
             self.net.save_checkpoint(self.checkpoint_dir / f'train-{iter}.pth.tar')
             self.sync_model('latest', f'train-{iter}.pth.tar')
 
             if not self.config.use_latest and iter % self.config.eval_every == 0:
+                # evaluate the model and decide whether to update every few iterations
                 with self.open_sgf(f'iter{iter}', 'eval', prefix='eval_') as f:
                     stats = self.eval_update(f)
                     score = (stats.n_win + 0.5 * stats.n_draw) / stats.n_match
@@ -317,7 +341,7 @@ class AlphaZero:
         cnt = ResultCounter()
         for i in tqdm(range(self.config.n_match_train), desc="Self Play"):
             episode, data = self.execute_episode()
-            self.train_eamples_queue += episode
+            self.train_examples_queue += episode
             cnt.add(episode[0][-1], 1)
             sgf_file.save(f"{i}", data)
         logger.info(f"[NEW TRAIN DATA COLLECTED]: {str(cnt)}")
@@ -364,56 +388,62 @@ def parse_args():
     import argparse
 
     parser = argparse.ArgumentParser()
+
     # General settings
     parser.add_argument('--seed', type=int, default=0, help='random seed')
     parser.add_argument('--job_id', type=str, help='job id')
     parser.add_argument('--log_file', type=str, default='log.txt', help='path to save the log file')
     parser.add_argument('--checkpoint_path', type=str, default='checkpoint', help='path to save the model')
     parser.add_argument('--sgf_path', type=str, default='sgf', help='path to save game records')
+    parser.add_argument('--result_path', type=str, default='results', help='path to save auxiliary results')
+
     # Environment settings
     parser.add_argument('--game', choices=GAME_CLASS.keys(), default='go', help='Game to play')
     parser.add_argument('--args', type=int, nargs='*', default=[9], help='Arguments for the game')
-    # Reinforcement learning settings
-    parser.add_argument('--n_train_iter', type=int, default=50, help='number of training iterations')
-    parser.add_argument('--n_match_train', type=int, default=20, help='number of self-play matches for each training iteration')
-    parser.add_argument('--n_match_update', type=int, default=20, 
-    help='number of self-play matches for updating the model')
-    parser.add_argument('--n_match_eval', type=int, default=20, help='number of matches for evaluating the model')
-    parser.add_argument('--max_queue_length', type=int, default=40000, help='max length of training examples queue')
-    parser.add_argument('--update_threshold', type=float, default=0.501, help='winning rate threshold for updating the model')
-    parser.add_argument('--use_latest', action='store_true', help='always use the latest instead of the best model for self-play')
-    parser.add_argument('--eval_every', type=int, default=5, help='evaluate the model every n iterations')
-    parser.add_argument('--eval_temperature', type=float, default=0.1, help='override temperature for evaluation')
-    parser.add_argument('--enable_resign', action='store_true', help='enable resignation for self-play')
-    parser.add_argument('--resign_threshold', type=float, default=-0.90, help='resignation threshold for self-play')
-    parser.add_argument('--n_resign_min_turn', type=int, default=20, help='minimum number of turns before resigning')
-    parser.add_argument('--n_resign_low_turn', type=int, default=3, help='resign if the score is below the threshold for n turns')
-    parser.add_argument('--resign_test_ratio', type=float, default=0.1, help='ratio of games not resigned to test false positives')
-    parser.add_argument('--resign_fpr', type=float, default=0.05, help='allowed false positive rate for resigning')
+
     # MCTS settings
     parser.add_argument('--n_search', type=int, default=120, help='number of MCTS simulations')
     parser.add_argument('--temperature', type=float, default=1.0, help='temperature for MCTS')
+    parser.add_argument('--eval_temperature', type=float, default=0.1, help='override temperature for evaluation')
     parser.add_argument('--C', type=float, default=1.0, help='exploration constant for MCTS')
-    parser.add_argument('--with_noise', action='store_true', help='use dirichlet noise for MCTS')
-    parser.add_argument('--dir_epsilon', type=float, default=0.25, help='dirichlet noise epsilon')
-    parser.add_argument('--dir_alpha', type=float, default=0.15, help='dirichlet noise alpha')
-    parser.add_argument("--opening_moves", type=int, default=10, help="number of opening moves")
 
     subparsers = parser.add_subparsers(dest='mode', required=True)
 
-    subparser = subparsers.add_parser('train')
     # Training settings
+    subparser = subparsers.add_parser('train')
     subparser.add_argument('--last_epoch', type=int, default=0, help='last epoch')
+
+    # Reinforcement learning settings
+    subparser.add_argument('--n_train_iter', type=int, default=50, help='number of training iterations')
+    subparser.add_argument('--n_match_train', type=int, default=20, help='number of self-play matches for each training iteration')
+    subparser.add_argument('--n_match_update', type=int, default=20, help='number of self-play matches for updating the model')
+    subparser.add_argument('--max_queue_length', type=int, default=40000, help='max length of training examples queue')
+    subparser.add_argument('--update_threshold', type=float, default=0.501, help='winning rate threshold for updating the model')
+    subparser.add_argument('--use_latest', action='store_true', help='always use the latest instead of the best model for self-play')
+    subparser.add_argument('--eval_every', type=int, default=5, help='evaluate the model every n iterations')
+    subparser.add_argument('--enable_resign', action='store_true', help='enable resignation for self-play')
+    subparser.add_argument('--resign_threshold', type=float, default=-0.90, help='resignation threshold for self-play')
+    subparser.add_argument('--n_resign_min_turn', type=int, default=20, help='minimum number of turns before resigning')
+    subparser.add_argument('--n_resign_low_turn', type=int, default=3, help='resign if the score is below the threshold for n turns')
+    subparser.add_argument('--resign_test_ratio', type=float, default=0.1, help='ratio of games not resigned to test false positives')
+    subparser.add_argument("--opening_moves", type=int, default=10, help="number of opening moves")
+
+    # MCTS settings
+    subparser.add_argument('--with_noise', action='store_true', help='use dirichlet noise for MCTS')
+    subparser.add_argument('--dir_epsilon', type=float, default=0.25, help='dirichlet noise epsilon')
+    subparser.add_argument('--dir_alpha', type=float, default=0.15, help='dirichlet noise alpha')
+
     # Model training settings
     subparser.add_argument('--epochs', type=int, default=10, help='number of epochs for training the model')
     subparser.add_argument('--batch_size', type=int, default=128, help='batch size for training the model')
     subparser.add_argument('--lr', type=float, default=0.0007, help='learning rate for training the model')
-    subparser.add_argument('--dropout', type=float, default=0.3, help='dropout rate for training the model')
+    # subparser.add_argument('--dropout', type=float, default=0.3, help='dropout rate for training the model')
     subparser.add_argument('--weight_decay', type=float, default=1e-4, help='weight decay for training the model')
+
     # Model settings (TODO)
 
-    subparser = subparsers.add_parser('eval')
     # Evaluation settings
+    subparser = subparsers.add_parser('eval')
     subparser.add_argument('--n_match_eval', type=int, default=20, help='number of matches for evaluating the model')
     subparser.add_argument('--checkpoint-name', type=str, default='best', help='model checkpoint to evaluate')
 
@@ -434,47 +464,57 @@ def build_alphazero(args, device: torch.device, cls = AlphaZero):
         job_id = args.job_id,
         checkpoint_path=args.checkpoint_path,
         sgf_path=args.sgf_path,
-        # Reinforcement learning settings
-        n_train_iter=args.n_train_iter,
-        n_match_train=args.n_match_train,
-        n_match_update=args.n_match_update,
-        n_match_eval=args.n_match_eval,
-        max_queue_length=args.max_queue_length,
-        update_threshold=args.update_threshold,
-        use_latest=args.use_latest,
-        eval_every=args.eval_every,
-        eval_temperature=args.eval_temperature,
-        enable_resign=args.enable_resign,
-        resign_threshold=args.resign_threshold,
-        n_resign_min_turn=args.n_resign_min_turn,
-        n_resign_low_turn=args.n_resign_low_turn,
-        resign_test_ratio=args.resign_test_ratio,
-        resign_fpr=args.resign_fpr,
+        
         # MCTS settings
-        opening_moves=args.opening_moves,
+        eval_temperature=args.eval_temperature,
     )
 
     mcts_config = puct_mcts.MCTSConfig(
         n_search=args.n_search,
         temperature=args.temperature,
         C=args.C,
-        with_noise=args.with_noise,
-        dir_epsilon=args.dir_epsilon,
-        dir_alpha=args.dir_alpha,
     )
 
+    # Model settings (TODO)
+    model_config = AlphaZeroNetConfig()
+
     model_training_config = None
+
     if args.mode == "train":
+        # Reinforcement learning settings
+        config.n_train_iter = args.n_train_iter
+        config.n_match_train = args.n_match_train
+        config.n_match_update = args.n_match_update
+        config.max_queue_length = args.max_queue_length
+        config.update_threshold = args.update_threshold
+        config.use_latest = args.use_latest
+        config.eval_every = args.eval_every
+        config.enable_resign = args.enable_resign
+        config.resign_threshold = args.resign_threshold
+        config.n_resign_min_turn = args.n_resign_min_turn
+        config.n_resign_low_turn = args.n_resign_low_turn
+        config.resign_test_ratio = args.resign_test_ratio
+        config.opening_moves = args.opening_moves
+
+        # MCTS settings
+        mcts_config.with_noise = args.with_noise
+        mcts_config.dir_epsilon = args.dir_epsilon
+        mcts_config.dir_alpha = args.dir_alpha
+
+        # Model training settings
         model_training_config = ModelTrainingConfig(
             epochs=args.epochs,
             batch_size=args.batch_size,
             lr=args.lr,
-            dropout=args.dropout,
+            # dropout=args.dropout,
             weight_decay=args.weight_decay,
         )
+
+    elif args.mode == "eval":
+        # Evaluation settings
+        config.n_match_eval = args.n_match_eval
     
-    env = GAME_CLASS[args.game](*args.args)
-    model_config = AlphaZeroNetConfig()
+    env: BaseGame = GAME_CLASS[args.game](*args.args)
     net = AlphaZeroNet(env.observation_size, env.action_space_size, config=model_config, device=device)
     net = ModelWrapper(env.observation_size, env.action_space_size, net, model_training_config)
     

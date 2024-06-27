@@ -85,7 +85,7 @@ class ModelWrapper():
     def transform_data(self, observation: np.ndarray):
         return np.stack((observation == 1, observation == -1), axis=0, dtype=np.float32)
 
-    def train(self, examples):
+    def train(self, examples) -> np.ndarray:
         dataset = GameDataset(examples, transform=self.transform_data)
         dataloader = DataLoader(dataset, batch_size=self.config.batch_size, shuffle=True)
 
@@ -93,11 +93,13 @@ class ModelWrapper():
 
         optimizer = optim.Adam(self.net.parameters(), weight_decay=self.config.weight_decay)
 
+        loss_history = []
         t = tqdm(range(self.config.epochs), desc='Training Net')
         for epoch in t:
             # logger.info('EPOCH ::: ' + str(epoch + 1))
             self.net.train()
 
+            epoch_loss = []
             progress_bar = tqdm(dataloader, total=len(dataloader), leave=False)
             for x, y in progress_bar:
                 x, y = to_device(x, self.device), to_device(y, self.device)
@@ -109,7 +111,12 @@ class ModelWrapper():
                 loss.backward()
                 optimizer.step()
 
+                epoch_loss.append(loss.item())
                 progress_bar.set_postfix(loss=loss.item())
+
+            loss_history.append(np.array(epoch_loss))
+
+        return np.stack(loss_history, axis=0)
 
     def predict(self, board):
         """

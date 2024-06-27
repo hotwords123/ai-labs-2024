@@ -171,7 +171,7 @@ class AlphaZeroParallel(AlphaZero):
         stats = PlayerStats()
         for i, worker_id in enumerate(tqdm(tasks, desc="Self Play")):
             episode, data = self.workers[worker_id].recv()
-            self.train_eamples_queue += episode
+            self.train_examples_queue += episode
             stats.update(episode[0][-1])
             sgf_file.save(f"{i}", data)
         logger.info(f"[NEW TRAIN DATA COLLECTED]: {stats}")
