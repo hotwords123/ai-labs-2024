@@ -110,7 +110,7 @@ def main():
     pit.add_task("random_vs_uct", [*common_args, "--players", "random", "uct"])
 
     # Random vs PUCT
-    for name, model_path in models[:10]:
+    for name, model_path in models[:20]:
         task_name = f"random_vs_{name}"
         task_args = [
             *common_args,
@@ -120,7 +120,7 @@ def main():
         pit.add_task(task_name, task_args)
 
     # UCT vs PUCT
-    for name, model_path in models[:10]:
+    for name, model_path in models[:20]:
         task_name = f"uct_vs_{name}"
         task_args = [
             *common_args,
