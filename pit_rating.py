@@ -5,13 +5,45 @@ from pathlib import Path
 from typing import NamedTuple
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 from tqdm import tqdm
-import matplotlib.pyplot as plt
-import pandas as pd
 from dataclasses import dataclass
 from sgf import SGFParser
+
+
+def parse_pit_sgf(content: str) -> tuple[PlayerStats, PlayerStats]:
+    """
+    Parse the result of pit games from an SGF file.
+    The stats are from the perspective of the player who plays as black.
+
+    Args:
+        content: The content of the SGF file.
+
+    Returns:
+        black: The stats where the first player is black.
+        white: The stats where the first player is white.
+    """
+    sgf = SGFParser(content).parse()
+    stats = {k: PlayerStats() for k in ("black", "white")}
+
+    for game in sgf.games:
+        # RE is "B+{score}" or "W+{score}" or "Draw"
+        re = game.root.get("RE")
+        if re.startswith("B+"):
+            score = 1
+        elif re.startswith("W+"):
+            score = -1
+        elif re == "Draw":
+            score = 0
+        else:
+            raise ValueError(f"Invalid result: {re}")
+
+        # GN is "pit_{role}_{datetime}"
+        role = game.root.get("GN").split("_")[1]
+        stats[role].update(score)
+
+    return stats["black"], stats["white"]
+
 
 class EloRatingModel(nn.Module):
     def __init__(self, num_players: int):
@@ -52,16 +84,18 @@ class EloRating:
         self.players: dict[str, Player] = {}
         self.results: list[PitResult] = []
 
-    def _add_result(self, player1: str, player2: str, score: int):
-        self.players[player1].stats.update(score)
-        self.players[player2].stats.update(-score)
-        self.results.append(PitResult(player1, player2, score))
+    def _update_stats(self, player1: str, player2: str, stats: PlayerStats):
+        self.players[player1].stats += stats
+        self.players[player2].stats += stats.inverse()
+
+        for score, count in [(1, stats.n_win), (-1, stats.n_lose), (0, stats.n_draw)]:
+            for _ in range(count):
+                self.results.append(PitResult(player1, player2, score))
 
     def load_results(self, result_dir: str):
-        for dir in Path(result_dir).iterdir():
-            if not dir.is_dir():
-                continue
+        dirs = [d for d in Path(result_dir).iterdir() if d.is_dir()]
 
+        for dir in tqdm(dirs, desc='Loading results'):
             player1, player2 = dir.name.split('_vs_')
 
             for player in (player1, player2):
@@ -69,26 +103,9 @@ class EloRating:
                     self.players[player] = Player(len(self.players), PlayerStats())
 
             sgf = (dir / 'match.sgf').read_text()
-            sgf = SGFParser(sgf).parse()
-
-            for game in sgf.games:
-                result = game.root.get("RE")
-                if result.startswith("B+"):
-                    score = 1
-                elif result.startswith("W+"):
-                    score = -1
-                elif result == "Draw":
-                    score = 0
-                else:
-                    raise ValueError(f"Invalid result: {result}")
-
-                role = game.root.get("GN").split("_")[1]
-                if role == "black":
-                    self._add_result(player1, player2, score)
-                elif role == "white":
-                    self._add_result(player2, player1, score)
-                else:
-                    raise ValueError(f"Invalid role: {role}")
+            black, white = parse_pit_sgf(sgf)
+            self._update_stats(player1, player2, black)
+            self._update_stats(player2, player1, white)
 
     def elo_rating(self, k: int = 16, seed: int | None = None) -> dict[str, int]:
         ratings = {player: 0 for player in self.players}
@@ -107,8 +124,8 @@ class EloRating:
         self,
         lr: float = 10.0,
         num_iter: int = 1000,
-        step_size: int = 30,
-        gamma: float = 0.9,
+        step_size: int = 25,
+        gamma: float = 0.95,
     ) -> tuple[dict[str, int], EloRatingModel,]:
         model = EloRatingModel(len(self.players))
         model.train()
@@ -137,50 +154,3 @@ class EloRating:
         ratings = model.ratings.detach().numpy()
         ratings = {player: ratings[data.id] for player, data in self.players.items()}
         return ratings, model
-
-
-if __name__ == '__main__':
-    elo = EloRating()
-    elo.load_results('results/pit-puct')
-
-    print("#players:", len(elo.players))
-    print("#results:", len(elo.results))
-
-    print("================================")
-
-    # ratings = elo.elo_rating()
-    ratings, model = elo.elo_rating_sgd()
-
-    baseline_player, baseline_rating = "uct", 1000
-    df = pd.DataFrame(ratings.items(), columns=['player', 'rating'])
-    df.set_index('player', inplace=True)
-    df['rating'] += baseline_rating - ratings[baseline_player]
-    df.sort_values('rating', inplace=True, ascending=False)
-
-    for player, rating in df.itertuples():
-        print(f'{player}: {rating:.0f} ({elo.players[player].stats})')
-
-    df.to_csv('results/puct_elo_rating.csv')
-
-    df2 = df[df.index.str.startswith('puct')].copy()
-    df2['epoch'] = df2.index.str.split('-').str[1].astype(int)
-    df2.sort_values('epoch', inplace=True)
-
-    plt.plot(df2['epoch'], df2['rating'], marker='o', label='puct')
-    plt.axhline(y=df.loc['random', 'rating'], color='tab:blue', linestyle='--', label='random')
-    plt.axhline(y=df.loc['uct', 'rating'], color='tab:orange', linestyle='--', label='uct')
-    plt.xlabel('Train Iteration')
-    plt.ylabel('Elo Rating')
-    plt.title('Elo Rating of AlphaZero')
-    plt.tight_layout()
-    plt.legend()
-    plt.savefig('results/puct_elo_rating.png')
-
-    # while True:
-    #     p1, p2 = (
-    #         torch.tensor([elo.players[p].id], dtype=torch.long)
-    #         for p in input().split()
-    #     )
-    #     out = model((p1, p2))
-    #     out = F.softmax(out, dim=1).detach().numpy()[0]
-    #     print(f'p1 win: {out[0]:.3f}, draw: {out[1]:.3f}, p2 win: {out[2]:.3f}')

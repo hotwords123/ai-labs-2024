@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import numpy as np
 import torch
+import argparse
 
 
 @dataclass
@@ -76,24 +77,40 @@ class PitParallel:
             self.task_queue.task_done()
 
 
-def main():
-    pit = PitParallel("results/pit-puct")
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model_dir", type=str, required=True, help="Model checkpoint directory")
+    parser.add_argument("--out_dir", type=str, default="results/pit-puct", help="Output directory")
 
-    model_dir = Path("checkpoint/helium")
-    models = [(f"puct-{i}", model_dir / f"train-{i}.pth.tar") for i in range(10, 201, 10)]
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+
+    pit = PitParallel(args.out_dir)
+
+    model_dir = Path(args.model_dir)
+    models = [
+        (f"puct-{i}", model_dir / f"train-{i}.pth.tar")
+        for i in range(1, 100 + 1, 1)
+    ]
 
     common_args = [
         "--game", "go",
         "--args", "9",
         "--n_match", "20",
         "--n_search", "200",
-        "--n_rollout", "12",
+        "--n_rollout", "10",
         "--temperature", "0.1",
         "--C", "1.0",
     ]
 
+    # Random vs UCT
+    pit.add_task("random_vs_uct", [*common_args, "--players", "random", "uct"])
+
     # Random vs PUCT
-    for name, model_path in models:
+    for name, model_path in models[:10]:
         task_name = f"random_vs_{name}"
         task_args = [
             *common_args,
@@ -102,9 +119,21 @@ def main():
         ]
         pit.add_task(task_name, task_args)
 
+    # UCT vs PUCT
+    for name, model_path in models[:10]:
+        task_name = f"uct_vs_{name}"
+        task_args = [
+            *common_args,
+            "--players", "uct", "puct",
+            "--model_path", str(model_path),
+        ]
+        pit.add_task(task_name, task_args)
+
     # PUCT vs PUCT
-    for i in range(len(models) - 1):
-        for j in range(max(0, i - 5), i):
+    for i in range(len(models)):
+        for d in (1, 2, 3, 5, 10):
+            if (j := i - d) < 0:
+                break
             name1, model1 = models[i]
             name2, model2 = models[j]
             task_name = f"{name1}_vs_{name2}"
