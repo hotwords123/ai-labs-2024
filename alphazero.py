@@ -445,7 +445,7 @@ def parse_args():
     # Evaluation settings
     subparser = subparsers.add_parser('eval')
     subparser.add_argument('--n_match_eval', type=int, default=20, help='number of matches for evaluating the model')
-    subparser.add_argument('--checkpoint-name', type=str, default='best', help='model checkpoint to evaluate')
+    subparser.add_argument('--checkpoint_name', type=str, default='best', help='model checkpoint to evaluate')
 
     args = parser.parse_args()
     if not args.job_id:
